@@ -7,6 +7,7 @@
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use toml_edit::{Item, Table};
 
 use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
 use crate::error::AppError;
@@ -40,6 +41,68 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
         }
     }
     out
+}
+
+/// Keep the approval preferences that live alongside an MCP server while the
+/// server definition itself is regenerated from the MCP database.
+///
+/// The database owns connection details such as `command`, `url`, and
+/// environment variables.  Codex keeps approvals in the config TOML instead,
+/// and rebuilding `[mcp_servers]` used to discard them on every sync.
+fn preserve_existing_approval_settings(existing_server: Option<&Item>, target_server: &mut Table) {
+    let Some(existing_server) = existing_server.and_then(Item::as_table_like) else {
+        return;
+    };
+
+    if let Some(default_mode) = existing_server
+        .get("default_tools_approval_mode")
+        .filter(|item| item.as_str().is_some())
+    {
+        target_server["default_tools_approval_mode"] = default_mode.clone();
+    }
+
+    let Some(existing_tools) = existing_server.get("tools").and_then(Item::as_table_like) else {
+        return;
+    };
+
+    let approval_modes: Vec<(String, Item)> = existing_tools
+        .iter()
+        .filter_map(|(tool_id, tool_item)| {
+            tool_item
+                .as_table_like()
+                .and_then(|tool| tool.get("approval_mode"))
+                .filter(|item| item.as_str().is_some())
+                .map(|mode| (tool_id.to_string(), mode.clone()))
+        })
+        .collect();
+
+    if approval_modes.is_empty() {
+        return;
+    }
+
+    if target_server.get("tools").is_none() {
+        target_server["tools"] = Item::Table(Table::new());
+    }
+
+    let Some(target_tools) = target_server
+        .get_mut("tools")
+        .and_then(Item::as_table_like_mut)
+    else {
+        return;
+    };
+
+    for (tool_id, approval_mode) in approval_modes {
+        if target_tools.get(&tool_id).is_none() {
+            target_tools.insert(&tool_id, Item::Table(Table::new()));
+        }
+
+        if let Some(target_tool) = target_tools
+            .get_mut(&tool_id)
+            .and_then(Item::as_table_like_mut)
+        {
+            target_tool.insert("approval_mode", approval_mode);
+        }
+    }
 }
 
 /// 从 ~/.codex/config.toml 导入 MCP 到统一结构（v3.7.0+）
@@ -284,8 +347,6 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
         return Ok(());
     }
-    use toml_edit::{Item, Table};
-
     // 1) 收集启用项（Codex 维度）
     let enabled = collect_enabled_servers(&config.mcp.codex);
 
@@ -311,7 +372,19 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
         }
     }
 
-    // 5) 构造目标 servers 表（稳定的键顺序）
+    // 5) 构造目标 servers 表（稳定的键顺序）。先快照已有审批配置，
+    // 因为下方会重建整个 [mcp_servers] 表。
+    let existing_servers: HashMap<String, Item> = doc
+        .get("mcp_servers")
+        .and_then(Item::as_table_like)
+        .map(|servers| {
+            servers
+                .iter()
+                .map(|(id, item)| (id.to_string(), item.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
     if enabled.is_empty() {
         // 无启用项：移除 mcp_servers 表
         doc.as_table_mut().remove("mcp_servers");
@@ -324,7 +397,8 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
             let spec = enabled.get(&id).expect("spec must exist");
             // 复用通用转换函数（已包含扩展字段支持）
             match json_server_to_toml_table(spec) {
-                Ok(table) => {
+                Ok(mut table) => {
+                    preserve_existing_approval_settings(existing_servers.get(&id), &mut table);
                     servers_tbl[&id[..]] = Item::Table(table);
                 }
                 Err(err) => {
@@ -353,8 +427,6 @@ pub fn sync_single_server_to_codex(
     if !should_sync_codex_mcp() {
         return Ok(());
     }
-    use toml_edit::Item;
-
     // 读取现有的 config.toml
     let config_path = crate::codex_config::get_codex_config_path();
 
@@ -380,13 +452,20 @@ pub fn sync_single_server_to_codex(
         }
     }
 
+    let existing_server = doc
+        .get("mcp_servers")
+        .and_then(Item::as_table_like)
+        .and_then(|servers| servers.get(id))
+        .cloned();
+
     // 确保 [mcp_servers] 表存在
     if !doc.contains_key("mcp_servers") {
         doc["mcp_servers"] = toml_edit::table();
     }
 
     // 将 JSON 服务器规范转换为 TOML 表
-    let toml_table = json_server_to_toml_table(server_spec)?;
+    let mut toml_table = json_server_to_toml_table(server_spec)?;
+    preserve_existing_approval_settings(existing_server.as_ref(), &mut toml_table);
 
     // 使用唯一正确的格式：[mcp_servers]
     doc["mcp_servers"][id] = Item::Table(toml_table);

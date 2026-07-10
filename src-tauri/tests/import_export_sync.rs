@@ -393,6 +393,69 @@ mode = "dev"
 }
 
 #[test]
+fn sync_enabled_to_codex_preserves_mcp_approval_preferences() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+    fs::write(
+        &path,
+        r#"[mcp_servers.codegraph]
+type = "stdio"
+command = "stale-command"
+default_tools_approval_mode = "approve"
+
+[mcp_servers.codegraph.tools.codegraph_search]
+approval_mode = "approve"
+
+[mcp_servers.codegraph.tools.codegraph_node]
+approval_mode = "reject"
+
+[mcp_servers.stale]
+type = "stdio"
+command = "must-not-survive"
+"#,
+    )
+    .expect("seed config.toml");
+
+    let mut config = MultiAppConfig::default();
+    config.mcp.codex.servers.insert(
+        "codegraph".into(),
+        json!({
+            "id": "codegraph",
+            "enabled": true,
+            "server": {
+                "type": "stdio",
+                "command": "codegraph"
+            }
+        }),
+    );
+
+    cc_switch_lib::sync_enabled_to_codex(&config).expect("sync codex");
+
+    let text = fs::read_to_string(&path).expect("read config.toml");
+    assert!(
+        text.contains("command = \"codegraph\""),
+        "DB-owned server definition should be refreshed, got: {text}"
+    );
+    assert!(
+        text.contains("default_tools_approval_mode = \"approve\"")
+            && text.contains("[mcp_servers.codegraph.tools.codegraph_search]")
+            && text.contains("[mcp_servers.codegraph.tools.codegraph_node]")
+            && text.contains("approval_mode = \"approve\"")
+            && text.contains("approval_mode = \"reject\""),
+        "approval preferences should survive the MCP projection, got: {text}"
+    );
+    assert!(
+        !text.contains("mcp_servers.stale") && !text.contains("must-not-survive"),
+        "disabled/stale MCP definitions must not be resurrected, got: {text}"
+    );
+}
+
+#[test]
 fn sync_enabled_to_codex_migrates_erroneous_mcp_dot_servers_to_mcp_servers() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -495,6 +558,44 @@ fn sync_enabled_to_codex_returns_error_on_invalid_toml() {
         }
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn sync_single_server_to_codex_preserves_mcp_approval_preferences() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+    fs::write(
+        &path,
+        r#"[mcp_servers.codegraph]
+type = "stdio"
+command = "stale-command"
+
+[mcp_servers.codegraph.tools.codegraph_search]
+approval_mode = "approve"
+"#,
+    )
+    .expect("seed config.toml");
+
+    let config = MultiAppConfig::default();
+    cc_switch_lib::sync_single_server_to_codex(
+        &config,
+        "codegraph",
+        &json!({ "type": "stdio", "command": "codegraph" }),
+    )
+    .expect("sync one server");
+
+    let text = fs::read_to_string(&path).expect("read config.toml");
+    assert!(
+        text.contains("command = \"codegraph\"")
+            && text.contains("[mcp_servers.codegraph.tools.codegraph_search]")
+            && text.contains("approval_mode = \"approve\""),
+        "single-server sync should preserve tool approvals, got: {text}"
+    );
 }
 
 #[test]
