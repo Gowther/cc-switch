@@ -906,6 +906,53 @@ command = "legacy-cmd"
     }
 
     #[test]
+    fn extract_codex_common_config_keeps_mcp_approval_preferences_only() {
+        let config_toml = r#"[mcp_servers.codegraph]
+type = "stdio"
+command = "codegraph"
+default_tools_approval_mode = "approve"
+
+[mcp_servers.codegraph.tools.codegraph_search]
+approval_mode = "approve"
+extra_setting = "must-not-share"
+
+[mcp_servers.codegraph.tools.codegraph_node]
+approval_mode = "reject"
+
+[mcp_servers.other]
+type = "http"
+url = "https://example.invalid/mcp"
+"#;
+
+        let settings = json!({ "config": config_toml });
+        let extracted = ProviderService::extract_codex_common_config(&settings)
+            .expect("extract_codex_common_config should succeed");
+
+        assert!(
+            extracted.contains("default_tools_approval_mode = \"approve\""),
+            "server-level approval default should remain shared, got: {extracted}"
+        );
+        assert!(
+            extracted.contains("[mcp_servers.codegraph.tools.codegraph_search]")
+                && extracted.contains("[mcp_servers.codegraph.tools.codegraph_node]")
+                && extracted.contains("approval_mode = \"approve\"")
+                && extracted.contains("approval_mode = \"reject\""),
+            "tool approval modes should remain shared, got: {extracted}"
+        );
+        for private_value in [
+            "command = \"codegraph\"",
+            "extra_setting = \"must-not-share\"",
+            "https://example.invalid/mcp",
+            "[mcp_servers.other]",
+        ] {
+            assert!(
+                !extracted.contains(private_value),
+                "MCP connection details must stay DB-owned: {private_value}; got: {extracted}"
+            );
+        }
+    }
+
+    #[test]
     fn extract_codex_common_config_keeps_user_set_web_search() {
         let config_toml = "web_search = \"enabled\"\ndisable_response_storage = true\n";
         let settings = json!({ "config": config_toml });
@@ -2924,6 +2971,57 @@ impl ProviderService {
             .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
     }
 
+    /// Extract the safe, user-owned approval preferences from DB-managed MCP
+    /// server entries. Connection details remain owned by the MCP database and
+    /// must not leak into the common provider snippet.
+    fn extract_codex_mcp_approval_settings(servers: &dyn toml_edit::TableLike) -> toml_edit::Table {
+        use toml_edit::{Item, Table};
+
+        let mut retained_servers = Table::new();
+
+        for (server_id, server_item) in servers.iter() {
+            let Some(server) = server_item.as_table_like() else {
+                continue;
+            };
+
+            let mut retained_server = Table::new();
+            if let Some(default_mode) = server
+                .get("default_tools_approval_mode")
+                .filter(|item| item.as_str().is_some())
+            {
+                retained_server["default_tools_approval_mode"] = default_mode.clone();
+            }
+
+            let mut retained_tools = Table::new();
+            if let Some(tools) = server.get("tools").and_then(|item| item.as_table_like()) {
+                for (tool_id, tool_item) in tools.iter() {
+                    let Some(tool) = tool_item.as_table_like() else {
+                        continue;
+                    };
+                    let Some(approval_mode) = tool
+                        .get("approval_mode")
+                        .filter(|item| item.as_str().is_some())
+                    else {
+                        continue;
+                    };
+
+                    let mut retained_tool = Table::new();
+                    retained_tool["approval_mode"] = approval_mode.clone();
+                    retained_tools[tool_id] = Item::Table(retained_tool);
+                }
+            }
+
+            if !retained_tools.is_empty() {
+                retained_server["tools"] = Item::Table(retained_tools);
+            }
+            if !retained_server.is_empty() {
+                retained_servers[server_id] = Item::Table(retained_server);
+            }
+        }
+
+        retained_servers
+    }
+
     /// Extract common config for Codex (TOML format)
     fn extract_codex_common_config(settings: &Value) -> Result<String, AppError> {
         // Codex config is stored as { "auth": {...}, "config": "toml string" }
@@ -2954,10 +3052,19 @@ impl ProviderService {
         // Remove entire model_providers table (provider-specific configuration)
         root.remove("model_providers");
 
-        // MCP 服务器归 DB mcp_servers 表所有：进了共享片段会绕过按应用的
-        // 启用状态被合并进所有勾选通用配置的供应商，且在通用配置编辑框里
-        // 显示为一份"重复"的 MCP 配置。
+        // MCP 服务器的连接定义归 DB mcp_servers 表所有，不能进入共享片段；
+        // 但 Codex 的工具审批偏好是用户配置，且不在 DB 中。只保留
+        // default_tools_approval_mode 和 tools.*.approval_mode，避免切换供应商
+        // 或 MCP 重投影时丢失这些偏好。
+        let retained_mcp_approvals = root
+            .get("mcp_servers")
+            .and_then(|item| item.as_table_like())
+            .map(Self::extract_codex_mcp_approval_settings)
+            .filter(|servers| !servers.is_empty());
         root.remove("mcp_servers");
+        if let Some(servers) = retained_mcp_approvals {
+            root.insert("mcp_servers", toml_edit::Item::Table(servers));
+        }
         // 历史错误格式 [mcp.servers] 一并剥离（与 strip_codex_mcp_servers_from_settings
         // 一致）：sync_all_enabled 只管理 [mcp_servers.*]，legacy 形态一旦进了
         // 片段就会被合并进所有供应商，且没有任何同步路径能清掉这个孤儿。
