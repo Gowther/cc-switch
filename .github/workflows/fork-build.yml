@@ -110,13 +110,15 @@ jobs:
       - name: Build unsigned universal macOS app
         run: pnpm tauri build --target universal-apple-darwin --bundles dmg --config .github/tauri.unsigned.conf.json
 
-      - name: Package app bundle for download
+      - name: Collect macOS installer for download
         run: |
+          set -euo pipefail
           mkdir -p unsigned-artifacts
-          APP_PATH=$(find src-tauri/target -path '*/bundle/macos/*.app' -type d | head -n 1)
-          test -n "$APP_PATH"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" unsigned-artifacts/CC-Switch-macos-universal.zip
-          find src-tauri/target -path '*/bundle/dmg/*.dmg' -type f -exec cp {} unsigned-artifacts/ \;
+          # Tauri removes its temporary .app bundle after creating the DMG.
+          # The DMG is the installable artifact, so only require and upload it.
+          DMG_PATH=$(find src-tauri/target -path '*/bundle/dmg/*.dmg' -type f -print -quit)
+          test -n "$DMG_PATH"
+          cp "$DMG_PATH" unsigned-artifacts/CC-Switch-macos-universal.dmg
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
