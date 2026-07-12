@@ -195,7 +195,8 @@ pub(crate) fn common_config_snippet_has_content(
             let document = trimmed.parse::<DocumentMut>().map_err(|e| {
                 AppError::Message(format!("Invalid Codex common config snippet: {e}"))
             })?;
-            Ok(document.as_table().iter().next().is_some())
+            let has_content = document.as_table().iter().next().is_some();
+            Ok(has_content)
         }
         AppType::Gemini => {
             let (env, config) = parse_gemini_common_config(trimmed)?;
