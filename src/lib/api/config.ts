@@ -39,13 +39,24 @@ export async function getCommonConfigSnippet(
  * 设置通用配置片段（统一接口）
  * @param appType - 应用类型（claude/codex/gemini）
  * @param snippet - 通用配置片段（原始字符串）
- * @throws 如果格式无效（Claude/Gemini 验证 JSON，Codex 暂不验证）
+ * @throws 如果格式无效（Claude/Gemini 验证 JSON，Codex 验证 TOML）
  */
 export async function setCommonConfigSnippet(
   appType: AppType,
   snippet: string,
 ): Promise<void> {
   return invoke("set_common_config_snippet", { appType, snippet });
+}
+
+/** Enable or disable common-config inheritance for every provider in an app. */
+export async function setCommonConfigEnabledForAll(
+  appType: Extract<AppType, "claude" | "codex" | "gemini">,
+  enabled: boolean,
+): Promise<number> {
+  return invoke<number>("set_common_config_enabled_for_all", {
+    appType,
+    enabled,
+  });
 }
 
 /**
@@ -75,7 +86,7 @@ export async function updateTomlCommonConfigSnippet(
  * 提取通用配置片段
  *
  * 默认读取当前激活供应商的配置；若传入 `options.settingsConfig`，则从编辑器当前内容提取。
- * 会自动排除差异化字段（API Key、模型配置、端点等），返回可复用的通用配置片段。
+ * 会自动排除凭据、端点和供应商路由标识，同时保留模型与其他用户偏好。
  *
  * @param appType - 应用类型（claude/codex/gemini）
  * @param options - 可选：提取来源

@@ -201,17 +201,17 @@ export function useCommonConfigSnippet({
 
   // 处理通用配置开关
   const handleCommonConfigToggle = useCallback(
-    (checked: boolean) => {
+    (checked: boolean, snippet = commonConfigSnippet) => {
       const { updatedConfig, error: snippetError } = updateCommonConfigSnippet(
         settingsConfig,
-        commonConfigSnippet,
+        snippet,
         checked,
       );
 
       if (snippetError) {
         setCommonConfigError(snippetError);
         setUseCommonConfig(false);
-        return;
+        return false;
       }
 
       setCommonConfigError("");
@@ -223,6 +223,7 @@ export function useCommonConfigSnippet({
       setTimeout(() => {
         isUpdatingFromCommonConfig.current = false;
       }, 0);
+      return true;
     },
     [settingsConfig, commonConfigSnippet, onConfigChange],
   );
@@ -231,10 +232,10 @@ export function useCommonConfigSnippet({
   const handleCommonConfigSnippetChange = useCallback(
     (value: string) => {
       const previousSnippet = commonConfigSnippet;
-      setCommonConfigSnippetState(value);
 
       if (!value.trim()) {
         setCommonConfigError("");
+        setCommonConfigSnippetState("");
         // 保存到 config.json（清空）
         configApi
           .setCommonConfigSnippet("claude", "")
@@ -254,15 +255,17 @@ export function useCommonConfigSnippet({
           onConfigChange(updatedConfig);
           setUseCommonConfig(false);
         }
-        return;
+        return true;
       }
 
       // 验证JSON格式
       const validationError = validateJsonConfig(value, "通用配置片段");
       if (validationError) {
         setCommonConfigError(validationError);
+        return false;
       } else {
         setCommonConfigError("");
+        setCommonConfigSnippetState(value);
         // 保存到 config.json
         configApi
           .setCommonConfigSnippet("claude", value)
@@ -283,7 +286,7 @@ export function useCommonConfigSnippet({
         );
         if (removeResult.error) {
           setCommonConfigError(removeResult.error);
-          return;
+          return false;
         }
         const addResult = updateCommonConfigSnippet(
           removeResult.updatedConfig,
@@ -293,7 +296,7 @@ export function useCommonConfigSnippet({
 
         if (addResult.error) {
           setCommonConfigError(addResult.error);
-          return;
+          return false;
         }
 
         // 标记正在通过通用配置更新，避免触发状态检查
@@ -304,14 +307,20 @@ export function useCommonConfigSnippet({
           isUpdatingFromCommonConfig.current = false;
         }, 0);
       }
+
+      return true;
     },
-    [commonConfigSnippet, settingsConfig, useCommonConfig, onConfigChange],
+    [commonConfigSnippet, settingsConfig, t, useCommonConfig, onConfigChange],
   );
 
   // 当配置变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）
   useEffect(() => {
     if (!enabled) return;
-    if (isUpdatingFromCommonConfig.current || isLoading) {
+    if (
+      isUpdatingFromCommonConfig.current ||
+      isLoading ||
+      initialEnabled !== undefined
+    ) {
       return;
     }
     const hasCommon = hasCommonConfigSnippet(
@@ -319,7 +328,7 @@ export function useCommonConfigSnippet({
       commonConfigSnippet,
     );
     setUseCommonConfig(hasCommon);
-  }, [enabled, settingsConfig, commonConfigSnippet, isLoading]);
+  }, [enabled, settingsConfig, commonConfigSnippet, initialEnabled, isLoading]);
 
   // 从编辑器当前内容提取通用配置片段
   const handleExtract = useCallback(async () => {

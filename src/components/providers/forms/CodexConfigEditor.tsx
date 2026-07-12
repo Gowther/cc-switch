@@ -39,6 +39,10 @@ interface CodexConfigEditorProps {
   onExtract?: () => void;
 
   isExtracting?: boolean;
+
+  onEnableAll?: (value: string) => Promise<boolean>;
+
+  isEnablingAll?: boolean;
 }
 
 const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
@@ -60,6 +64,8 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   configError,
   onExtract,
   isExtracting,
+  onEnableAll,
+  isEnablingAll,
 }) => {
   const { t } = useTranslation();
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
@@ -111,6 +117,8 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
         error={commonConfigError}
         onExtract={onExtract}
         isExtracting={isExtracting}
+        onEnableAll={onEnableAll}
+        isEnablingAll={isEnablingAll}
       />
     </div>
   );

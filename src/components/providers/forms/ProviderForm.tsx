@@ -12,7 +12,7 @@ import {
   buildLocalProxyRequestOverrides,
   formatRequestOverrideObject,
 } from "@/lib/requestOverrides";
-import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import { configApi, providersApi, settingsApi, type AppId } from "@/lib/api";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
@@ -822,6 +822,8 @@ function ProviderFormFull({
   } = useGeminiCommonConfig({
     envValue: geminiEnv,
     onEnvChange: handleGeminiEnvChange,
+    configValue: geminiConfig,
+    onConfigChange: handleGeminiConfigChange,
     envStringToObj,
     envObjToString,
     initialData: appId === "gemini" ? initialData : undefined,
@@ -982,6 +984,75 @@ function ProviderFormFull({
   ]);
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
+  const [isEnablingCommonConfigForAll, setIsEnablingCommonConfigForAll] =
+    useState(false);
+
+  const handleEnableCommonConfigForAll = useCallback(
+    async (snippet: string): Promise<boolean> => {
+      if (appId !== "claude" && appId !== "codex" && appId !== "gemini") {
+        return false;
+      }
+
+      setIsEnablingCommonConfigForAll(true);
+      try {
+        let saved = true;
+        if (appId === "claude") {
+          saved = handleCommonConfigSnippetChange(snippet);
+        } else if (appId === "codex") {
+          saved = await handleCodexCommonConfigSnippetChange(snippet);
+        } else {
+          saved = handleGeminiCommonConfigSnippetChange(snippet);
+        }
+        if (saved === false) return false;
+
+        // Await persistence before the bulk update so every provider is
+        // normalized against the exact snippet shown in the modal.
+        await configApi.setCommonConfigSnippet(appId, snippet);
+        const count = await configApi.setCommonConfigEnabledForAll(appId, true);
+
+        if (appId === "claude" && !useCommonConfig) {
+          handleCommonConfigToggle(true, snippet);
+        } else if (appId === "codex" && !useCodexCommonConfigFlag) {
+          await handleCodexCommonConfigToggle(true, snippet);
+        } else if (appId === "gemini" && !useGeminiCommonConfigFlag) {
+          handleGeminiCommonConfigToggle(true, snippet);
+        }
+
+        await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+        toast.success(
+          t("commonConfig.enableAllSuccess", {
+            count,
+            defaultValue: `已为 ${count} 个供应商启用通用配置`,
+          }),
+        );
+        return true;
+      } catch (error) {
+        toast.error(
+          t("commonConfig.enableAllFailed", {
+            error: String(error),
+            defaultValue: `批量启用失败：${String(error)}`,
+          }),
+        );
+        return false;
+      } finally {
+        setIsEnablingCommonConfigForAll(false);
+      }
+    },
+    [
+      appId,
+      handleCodexCommonConfigSnippetChange,
+      handleCodexCommonConfigToggle,
+      handleCommonConfigSnippetChange,
+      handleCommonConfigToggle,
+      handleGeminiCommonConfigSnippetChange,
+      handleGeminiCommonConfigToggle,
+      queryClient,
+      t,
+      useCodexCommonConfigFlag,
+      useCommonConfig,
+      useGeminiCommonConfigFlag,
+    ],
+  );
 
   const shouldApplyLocalProxyRequestOverrides =
     (appId === "claude" || appId === "codex") && category !== "official";
@@ -2328,6 +2399,8 @@ function ProviderFormFull({
                 configError={codexConfigError}
                 onExtract={handleCodexExtract}
                 isExtracting={isCodexExtracting}
+                onEnableAll={handleEnableCommonConfigForAll}
+                isEnablingAll={isEnablingCommonConfigForAll}
               />
               {settingsConfigErrorField}
             </>
@@ -2350,6 +2423,8 @@ function ProviderFormFull({
                 configError={geminiConfigError}
                 onExtract={handleGeminiExtract}
                 isExtracting={isGeminiExtracting}
+                onEnableAll={handleEnableCommonConfigForAll}
+                isEnablingAll={isEnablingCommonConfigForAll}
               />
               {settingsConfigErrorField}
             </>
@@ -2447,6 +2522,8 @@ function ProviderFormFull({
                 onModalClose={() => setIsCommonConfigModalOpen(false)}
                 onExtract={handleClaudeExtract}
                 isExtracting={isClaudeExtracting}
+                onEnableAll={handleEnableCommonConfigForAll}
+                isEnablingAll={isEnablingCommonConfigForAll}
               />
               {settingsConfigErrorField}
             </>

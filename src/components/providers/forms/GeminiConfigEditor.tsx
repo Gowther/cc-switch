@@ -18,6 +18,8 @@ interface GeminiConfigEditorProps {
   configError: string;
   onExtract?: () => void;
   isExtracting?: boolean;
+  onEnableAll?: (value: string) => Promise<boolean>;
+  isEnablingAll?: boolean;
 }
 
 const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
@@ -36,6 +38,8 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
   configError,
   onExtract,
   isExtracting,
+  onEnableAll,
+  isEnablingAll,
 }) => {
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
@@ -74,6 +78,8 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
         error={commonConfigError}
         onExtract={onExtract}
         isExtracting={isExtracting}
+        onEnableAll={onEnableAll}
+        isEnablingAll={isEnablingAll}
       />
     </div>
   );

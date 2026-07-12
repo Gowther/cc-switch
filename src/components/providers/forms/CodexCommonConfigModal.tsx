@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Save, Download, Loader2, Package } from "lucide-react";
+import { Save, Download, Loader2, Package, CheckCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,8 @@ interface CodexCommonConfigModalProps {
   error?: string;
   onExtract?: () => void;
   isExtracting?: boolean;
+  onEnableAll?: (value: string) => Promise<boolean>;
+  isEnablingAll?: boolean;
 }
 
 /**
@@ -27,6 +29,8 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   error,
   onExtract,
   isExtracting,
+  onEnableAll,
+  isEnablingAll = false,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -86,6 +90,28 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
               )}
               {t("codexConfig.extractFromCurrent", {
                 defaultValue: "从编辑内容提取",
+              })}
+            </Button>
+          )}
+          {onEnableAll && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                void onEnableAll(draftValue).then((enabled) => {
+                  if (enabled) handleClose();
+                });
+              }}
+              disabled={isEnablingAll || !draftValue.trim()}
+              className="gap-2"
+            >
+              {isEnablingAll ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <CheckCheck className="w-4 h-4" />
+              )}
+              {t("commonConfig.enableAll", {
+                defaultValue: "为全部供应商启用",
               })}
             </Button>
           )}

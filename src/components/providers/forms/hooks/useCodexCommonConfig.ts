@@ -309,11 +309,11 @@ export function useCodexCommonConfig({
 
   // 处理通用配置开关
   const handleCommonConfigToggle = useCallback(
-    async (checked: boolean) => {
+    async (checked: boolean, snippet = commonConfigSnippet) => {
       // 在同步校验之前领号：即使本次走同步早退分支，也要让更早发出、
       // 仍在飞的异步结果作废，避免它晚到后把开关翻回去。
       const seq = ++tomlOpSeqRef.current;
-      const parsedSnippet = parseCommonConfigSnippet(commonConfigSnippet);
+      const parsedSnippet = parseCommonConfigSnippet(snippet);
       if (parsedSnippet.error) {
         setCommonConfigError(parsedSnippet.error);
         setUseCommonConfig(false);
@@ -331,7 +331,7 @@ export function useCodexCommonConfig({
 
       const { updatedConfig, error: snippetError } = await applyTomlSnippet(
         codexConfig,
-        commonConfigSnippet,
+        snippet,
         checked,
       );
       if (isTomlOpStale(seq, codexConfig)) {
@@ -484,7 +484,11 @@ export function useCodexCommonConfig({
 
   // 当配置变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）
   useEffect(() => {
-    if (isUpdatingFromCommonConfig.current || isLoading) {
+    if (
+      isUpdatingFromCommonConfig.current ||
+      isLoading ||
+      initialEnabled !== undefined
+    ) {
       return;
     }
     const parsedSnippet = parseCommonConfigSnippet(commonConfigSnippet);
@@ -497,7 +501,13 @@ export function useCodexCommonConfig({
       commonConfigSnippet,
     );
     setUseCommonConfig(hasCommon);
-  }, [codexConfig, commonConfigSnippet, isLoading, parseCommonConfigSnippet]);
+  }, [
+    codexConfig,
+    commonConfigSnippet,
+    initialEnabled,
+    isLoading,
+    parseCommonConfigSnippet,
+  ]);
 
   // 从编辑器当前内容提取通用配置片段
   const handleExtract = useCallback(async () => {

@@ -47,9 +47,78 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), S
     }
 
     match app_type {
-        "claude" | "gemini" | "omo" | "omo-slim" => {
+        "claude" => {
+            let value = serde_json::from_str::<serde_json::Value>(snippet)
+                .map_err(invalid_json_format_error)?;
+            if !value.is_object() {
+                return Err("Claude common config must be a JSON object".to_string());
+            }
+        }
+        "omo" | "omo-slim" => {
             serde_json::from_str::<serde_json::Value>(snippet)
                 .map_err(invalid_json_format_error)?;
+        }
+        "gemini" => {
+            let value = serde_json::from_str::<serde_json::Value>(snippet)
+                .map_err(invalid_json_format_error)?;
+            let object = value
+                .as_object()
+                .ok_or_else(|| "Gemini common config must be a JSON object".to_string())?;
+            let structured = object.contains_key("env") || object.contains_key("config");
+            let env = if structured {
+                let unexpected: Vec<&String> = object
+                    .keys()
+                    .filter(|key| key.as_str() != "env" && key.as_str() != "config")
+                    .collect();
+                if !unexpected.is_empty() {
+                    return Err(format!(
+                        "Gemini common config only supports env and config sections: {}",
+                        unexpected
+                            .iter()
+                            .map(|key| key.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if object.get("config").is_some_and(|value| !value.is_object()) {
+                    return Err("Gemini common config.config must be a JSON object".to_string());
+                }
+                object
+                    .get("env")
+                    .map(|value| {
+                        value.as_object().ok_or_else(|| {
+                            "Gemini common config.env must be a JSON object".to_string()
+                        })
+                    })
+                    .transpose()?
+            } else {
+                Some(object)
+            };
+
+            if let Some(env) = env {
+                let forbidden: Vec<&String> = env
+                    .keys()
+                    .filter(|key| {
+                        key.as_str() == "GOOGLE_GEMINI_BASE_URL"
+                            || crate::services::provider::ProviderService::is_sensitive_config_key(
+                                key,
+                            )
+                    })
+                    .collect();
+                if !forbidden.is_empty() {
+                    return Err(format!(
+                        "Gemini common config may not contain provider URLs or credentials: {}",
+                        forbidden
+                            .iter()
+                            .map(|key| key.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if env.values().any(|value| !value.is_string()) {
+                    return Err("Gemini common config env values must all be strings".to_string());
+                }
+            }
         }
         "codex" => {
             snippet
@@ -370,6 +439,21 @@ pub async fn set_common_config_snippet(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn set_common_config_enabled_for_all(
+    appType: String,
+    enabled: bool,
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<usize, String> {
+    let app = AppType::from_str(&appType).map_err(|e| e.to_string())?;
+    crate::services::provider::ProviderService::set_common_config_enabled_for_all(
+        state.inner(),
+        app,
+        enabled,
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate_common_config_snippet;
@@ -388,6 +472,34 @@ mod tests {
             err.contains("TOML") || err.contains("toml") || err.contains("格式"),
             "expected TOML validation error, got {err}"
         );
+    }
+
+    #[test]
+    fn validate_common_config_snippet_accepts_structured_and_legacy_gemini_snippets() {
+        validate_common_config_snippet(
+            "gemini",
+            r#"{ "env": { "GEMINI_MODEL": "gemini-3.5-flash" }, "config": { "theme": "Default" } }"#,
+        )
+        .expect("structured Gemini snippet should be valid");
+        validate_common_config_snippet("gemini", r#"{ "GEMINI_MODEL": "gemini-3.5-flash" }"#)
+            .expect("legacy flat Gemini snippet should remain valid");
+    }
+
+    #[test]
+    fn validate_common_config_snippet_rejects_gemini_credentials() {
+        let error = validate_common_config_snippet(
+            "gemini",
+            r#"{ "env": { "GOOGLE_API_KEY": "secret" } }"#,
+        )
+        .expect_err("credential must be rejected");
+        assert!(error.contains("GOOGLE_API_KEY"));
+    }
+
+    #[test]
+    fn validate_common_config_snippet_rejects_non_object_claude_snippet() {
+        let error = validate_common_config_snippet("claude", r#"["invalid"]"#)
+            .expect_err("Claude common config must be an object");
+        assert!(error.contains("JSON object"));
     }
 }
 
