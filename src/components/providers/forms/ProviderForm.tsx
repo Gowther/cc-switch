@@ -435,10 +435,6 @@ function ProviderFormFull({
   // 确认框走的提交路径绕过了 react-hook-form 的 isSubmitting，单独追踪
   const [isConfirmSubmitting, setIsConfirmSubmitting] = useState(false);
 
-  useEffect(() => {
-    onSubmittingChange?.(isSubmitting || isConfirmSubmitting);
-  }, [isSubmitting, isConfirmSubmitting, onSubmittingChange]);
-
   const {
     apiKey,
     handleApiKeyChange,
@@ -733,6 +729,7 @@ function ProviderFormFull({
     handleCommonConfigToggle: handleCodexCommonConfigToggle,
     handleCommonConfigSnippetChange: handleCodexCommonConfigSnippetChange,
     isExtracting: isCodexExtracting,
+    isCommonConfigBusy: isCodexCommonConfigBusy,
     handleExtract: handleCodexExtract,
     clearCommonConfigError: clearCodexCommonConfigError,
   } = useCodexCommonConfig({
@@ -1005,9 +1002,12 @@ function ProviderFormFull({
         }
         if (saved === false) return false;
 
-        // Await persistence before the bulk update so every provider is
-        // normalized against the exact snippet shown in the modal.
-        await configApi.setCommonConfigSnippet(appId, snippet);
+        // The Codex hook awaits its own persistence. Calling it a second time
+        // here used to start another live-config sync that could race the bulk
+        // enable and the local TOML merge.
+        if (appId !== "codex") {
+          await configApi.setCommonConfigSnippet(appId, snippet);
+        }
         const count = await configApi.setCommonConfigEnabledForAll(appId, true);
 
         if (appId === "claude" && !useCommonConfig) {
@@ -1053,6 +1053,21 @@ function ProviderFormFull({
       useGeminiCommonConfigFlag,
     ],
   );
+
+  const isCommonConfigOperationPending =
+    appId === "codex" &&
+    (isCodexCommonConfigBusy || isEnablingCommonConfigForAll);
+
+  useEffect(() => {
+    onSubmittingChange?.(
+      isSubmitting || isConfirmSubmitting || isCommonConfigOperationPending,
+    );
+  }, [
+    isSubmitting,
+    isConfirmSubmitting,
+    isCommonConfigOperationPending,
+    onSubmittingChange,
+  ]);
 
   const shouldApplyLocalProxyRequestOverrides =
     (appId === "claude" || appId === "codex") && category !== "official";
@@ -2401,6 +2416,7 @@ function ProviderFormFull({
                 isExtracting={isCodexExtracting}
                 onEnableAll={handleEnableCommonConfigForAll}
                 isEnablingAll={isEnablingCommonConfigForAll}
+                isCommonConfigBusy={isCommonConfigOperationPending}
               />
               {settingsConfigErrorField}
             </>
@@ -2548,7 +2564,11 @@ function ProviderFormFull({
               </Button>
               <Button
                 type="submit"
-                disabled={isSubmitting || isConfirmSubmitting}
+                disabled={
+                  isSubmitting ||
+                  isConfirmSubmitting ||
+                  isCommonConfigOperationPending
+                }
               >
                 {submitLabel}
               </Button>

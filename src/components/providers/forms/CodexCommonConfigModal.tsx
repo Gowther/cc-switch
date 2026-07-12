@@ -15,6 +15,7 @@ interface CodexCommonConfigModalProps {
   isExtracting?: boolean;
   onEnableAll?: (value: string) => Promise<boolean>;
   isEnablingAll?: boolean;
+  isBusy?: boolean;
 }
 
 /**
@@ -31,6 +32,7 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   isExtracting,
   onEnableAll,
   isEnablingAll = false,
+  isBusy = false,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -80,7 +82,7 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
               type="button"
               variant="outline"
               onClick={onExtract}
-              disabled={isExtracting}
+              disabled={isBusy || isExtracting}
               className="gap-2"
             >
               {isExtracting ? (
@@ -102,7 +104,7 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
                   if (enabled) handleClose();
                 });
               }}
-              disabled={isEnablingAll || !draftValue.trim()}
+              disabled={isBusy || isEnablingAll || !draftValue.trim()}
               className="gap-2"
             >
               {isEnablingAll ? (
@@ -115,10 +117,20 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
               })}
             </Button>
           )}
-          <Button type="button" variant="outline" onClick={handleClose}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleClose}
+            disabled={isBusy}
+          >
             {t("common.cancel")}
           </Button>
-          <Button type="button" onClick={handleSave} className="gap-2">
+          <Button
+            type="button"
+            onClick={handleSave}
+            disabled={isBusy}
+            className="gap-2"
+          >
             <Save className="w-4 h-4" />
             {t("common.save")}
           </Button>

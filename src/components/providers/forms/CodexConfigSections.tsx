@@ -114,6 +114,7 @@ interface CodexConfigSectionProps {
   commonConfigError?: string;
   configError?: string;
   isProxyTakeover?: boolean;
+  isCommonConfigBusy?: boolean;
 }
 
 /**
@@ -130,6 +131,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   commonConfigError,
   configError,
   isProxyTakeover = false,
+  isCommonConfigBusy = false,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -308,6 +310,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
               type="checkbox"
               checked={useCommonConfig}
               onChange={(e) => onCommonConfigToggle(e.target.checked)}
+              disabled={isCommonConfigBusy}
               className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
             />
             {t("codexConfig.writeCommonConfig")}
