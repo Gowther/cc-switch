@@ -70,8 +70,9 @@ describe("useCodexCommonConfig", () => {
     if (!resolveMerge) {
       throw new Error("expected the preview merge to be pending");
     }
+    const mergeResolver = resolveMerge;
     await act(async () => {
-      resolveMerge(`${providerDelta}${commonSnippet}`);
+      mergeResolver(`${providerDelta}${commonSnippet}`);
       await mergePromise;
     });
 

@@ -713,6 +713,15 @@ mod tests {
                 "AWS_BEARER_TOKEN_BEDROCK": "bedrock-tok",
                 "ANTHROPIC_BASE_URL": "https://example.com",
                 "ANTHROPIC_MODEL": "claude-x",
+                "ANTHROPIC_REASONING_MODEL": "claude-reasoning-x",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-mapped",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Haiku Mapped",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-mapped[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet Mapped",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped[1M]",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus Mapped",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL": "fable-mapped[1M]",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "Fable Mapped",
                 "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini",
                 // 可共享、非机密配置（复数 _TOKENS 不应被误剥）
                 "ENABLE_TOOL_SEARCH": "true",
@@ -720,6 +729,8 @@ mod tests {
             },
             "apiKey": "sk-top",
             "api_key": "sk-top2",
+            "primaryModel": "legacy-primary",
+            "smallFastModel": "legacy-small",
             "theme": "dark",
             "includeCoAuthoredBy": false
         });
@@ -753,18 +764,28 @@ mod tests {
             "top-level credentials must be stripped"
         );
 
-        // 端点属于供应商连接差异，模型设置属于用户偏好，应进入共享片段。
+        // 端点/模型（provider-specific 非机密）也应剥掉，保持与上游通用配置规则一致。
         assert!(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")).is_none());
-        assert_eq!(
-            env.and_then(|e| e.get("ANTHROPIC_MODEL"))
-                .and_then(|v| v.as_str()),
-            Some("claude-x")
-        );
-        assert_eq!(
-            env.and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
-                .and_then(|v| v.as_str()),
-            Some("gpt-5.4-mini")
-        );
+        for stripped in [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ] {
+            assert!(
+                env.and_then(|e| e.get(stripped)).is_none(),
+                "provider-specific model key {stripped} must not enter common config"
+            );
+        }
+        assert!(value.get("primaryModel").is_none());
+        assert!(value.get("smallFastModel").is_none());
 
         // 可共享的非机密配置必须保留（含复数 _TOKENS 不被误剥）
         assert_eq!(
@@ -837,6 +858,7 @@ mod tests {
         // [mcp.servers] 是历史错误格式，sync_all_enabled 清不掉它。
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
+model_reasoning_effort = "max"
 wire_api = "chat"
 disable_response_storage = true
 experimental_bearer_token = "sk-live-secret"
@@ -866,10 +888,16 @@ command = "legacy-cmd"
             "should remove top-level model_provider"
         );
         assert!(
-            extracted
+            !extracted
                 .lines()
                 .any(|line| line.trim_start().starts_with("model = \"gpt-4\"")),
-            "user-selected model should remain shareable, got: {extracted}"
+            "user-selected model should stay provider-owned, got: {extracted}"
+        );
+        assert!(
+            !extracted
+                .lines()
+                .any(|line| line.trim_start().starts_with("model_reasoning_effort")),
+            "reasoning effort should stay provider-owned, got: {extracted}"
         );
         assert!(
             !extracted.contains("[model_providers"),
@@ -2946,11 +2974,12 @@ impl ProviderService {
     /// 不会误删其它供应商共享的内容。
     ///
     /// **作用域**：Claude + Codex。Codex 提取器（`extract_codex_common_config`）
-    /// 已剥离全部供应商专属与 cc-switch 注入内容：`model_provider` /
-    /// 顶层 `base_url` / 整张 `model_providers` 表（含端点与统一会话桶）、
-    /// `mcp_servers`（SSOT 在 DB 表）、顶层 `experimental_bearer_token`
-    /// fallback、`model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与
-    /// 注入产物不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
+    /// 已剥离全部供应商专属与 cc-switch 注入内容：`model` /
+    /// `model_reasoning_effort` / `model_provider` / 顶层 `base_url` /
+    /// 整张 `model_providers` 表（含端点与统一会话桶）、`mcp_servers`
+    /// （SSOT 在 DB 表）、顶层 `experimental_bearer_token` fallback、
+    /// `model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与注入产物
+    /// 不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
     ///
     /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
     /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
@@ -3127,13 +3156,26 @@ impl ProviderService {
     fn extract_claude_common_config(settings: &Value) -> Result<String, AppError> {
         let mut config = settings.clone();
 
-        // 只保留供应商连接差异：端点和凭据不共享；模型、Hook、插件、权限等
-        // 用户配置进入通用片段，避免在每个 Provider 中重复维护。
-        const ENV_PROVIDER_SPECIFIC_EXCLUDES: &[&str] = &["ANTHROPIC_BASE_URL"];
+        // 供应商专属的非机密字段（模型 + 端点）不共享；凭据/机密不在此列举，
+        // 由 `is_sensitive_config_key` 统一剥离。
+        const ENV_PROVIDER_SPECIFIC_EXCLUDES: &[&str] = &[
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            "ANTHROPIC_BASE_URL",
+        ];
 
-        const TOP_LEVEL_EXCLUDES: &[&str] = &["apiBaseUrl"];
+        const TOP_LEVEL_EXCLUDES: &[&str] = &["apiBaseUrl", "primaryModel", "smallFastModel"];
 
-        // Remove provider endpoints and every credential-like env key.
+        // Remove env fields: provider-specific (models/endpoint) + credential-like keys.
         if let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) {
             let sensitive: Vec<String> = env
                 .keys()
@@ -3246,6 +3288,8 @@ impl ProviderService {
 
         // Remove provider-specific fields.
         let root = doc.as_table_mut();
+        root.remove("model");
+        root.remove("model_reasoning_effort");
         root.remove("model_provider");
         // Legacy/alt formats might use a top-level base_url.
         root.remove("base_url");
