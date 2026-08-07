@@ -61,6 +61,13 @@ export interface DiscoverableSkill {
   repoBranch: string;
 }
 
+/** 单个仓库完成发现时的增量结果 */
+export interface SkillDiscoveryRepoUpdate {
+  repoOwner: string;
+  repoName: string;
+  skills: DiscoverableSkill[];
+}
+
 /** 未管理的 Skill（用于导入） */
 export interface UnmanagedSkill {
   directory: string;
@@ -190,8 +197,8 @@ export const skillsApi = {
   },
 
   /** 发现可安装的 Skills（从仓库获取） */
-  async discoverAvailable(): Promise<DiscoverableSkill[]> {
-    return await invoke("discover_available_skills");
+  async discoverAvailable(forceRefresh = false): Promise<DiscoverableSkill[]> {
+    return await invoke("discover_available_skills", { forceRefresh });
   },
 
   /** 检查 Skills 更新 */

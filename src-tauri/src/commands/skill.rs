@@ -12,12 +12,21 @@ use crate::services::skill::{
     SkillsShSearchResult,
 };
 use crate::store::AppState;
+use serde::Serialize;
 use std::str::FromStr;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 /// SkillService 状态包装
 pub struct SkillServiceState(pub Arc<SkillService>);
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillDiscoveryRepoUpdate {
+    repo_owner: String,
+    repo_name: String,
+    skills: Vec<DiscoverableSkill>,
+}
 
 /// 解析 app 参数为 AppType
 fn parse_app_type(app: &str) -> Result<AppType, String> {
@@ -119,13 +128,28 @@ pub fn import_skills_from_apps(
 /// 发现可安装的 Skills（从仓库获取）
 #[tauri::command]
 pub async fn discover_available_skills(
+    force_refresh: Option<bool>,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<Vec<DiscoverableSkill>, String> {
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
     service
         .0
-        .discover_available(repos)
+        .discover_available_with_progress(
+            repos,
+            force_refresh.unwrap_or(false),
+            move |repo, skills| {
+                let payload = SkillDiscoveryRepoUpdate {
+                    repo_owner: repo.owner.clone(),
+                    repo_name: repo.name.clone(),
+                    skills: skills.to_vec(),
+                };
+                if let Err(error) = app.emit("skill-discovery-repo-updated", payload) {
+                    log::debug!("发送 Skill 发现进度事件失败: {error}");
+                }
+            },
+        )
         .await
         .map_err(|e| e.to_string())
 }
@@ -226,17 +250,16 @@ pub async fn install_skill_for_app(
 ) -> Result<bool, String> {
     let app_type = parse_app_type(&app)?;
 
-    // 先获取技能信息
+    // 优先使用持久化发现缓存；仅缓存未命中时刷新远程索引。
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
     let skills = service
         .0
-        .discover_available(repos)
+        .discover_available(repos.clone())
         .await
         .map_err(|e| e.to_string())?;
 
-    let skill = skills
-        .into_iter()
-        .find(|s| {
+    let find_skill = |skills: Vec<DiscoverableSkill>| {
+        skills.into_iter().find(|s| {
             let install_name = std::path::Path::new(&s.directory)
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -244,13 +267,26 @@ pub async fn install_skill_for_app(
             install_name.eq_ignore_ascii_case(&directory)
                 || s.directory.eq_ignore_ascii_case(&directory)
         })
-        .ok_or_else(|| {
-            format_skill_error(
-                "SKILL_NOT_FOUND",
-                &[("directory", &directory)],
-                Some("checkRepoUrl"),
-            )
-        })?;
+    };
+
+    let skill = match find_skill(skills) {
+        Some(skill) => Some(skill),
+        None => {
+            let refreshed = service
+                .0
+                .discover_available_with_progress(repos, true, |_, _| {})
+                .await
+                .map_err(|e| e.to_string())?;
+            find_skill(refreshed)
+        }
+    }
+    .ok_or_else(|| {
+        format_skill_error(
+            "SKILL_NOT_FOUND",
+            &[("directory", &directory)],
+            Some("checkRepoUrl"),
+        )
+    })?;
 
     service
         .0

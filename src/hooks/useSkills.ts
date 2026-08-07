@@ -4,17 +4,23 @@ import {
   useQueryClient,
   keepPreviousData,
 } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   skillsApi,
   type SkillBackupEntry,
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillDiscoveryRepoUpdate,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
-import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
+import {
+  mergeDiscoverableRepoSkills,
+  mergeImportedSkills,
+} from "@/hooks/useSkills.helpers";
 
 /**
  * 查询所有已安装的 Skills
@@ -54,11 +60,55 @@ export function useDeleteSkillBackup() {
  * 实现首次进入使用缓存，只有刷新时才重新获取
  */
 export function useDiscoverableSkills() {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+
+    listen<SkillDiscoveryRepoUpdate>(
+      "skill-discovery-repo-updated",
+      ({ payload }) => {
+        if (!active) return;
+        queryClient.setQueryData<DiscoverableSkill[]>(
+          ["skills", "discoverable"],
+          (existing) => mergeDiscoverableRepoSkills(existing, payload),
+        );
+      },
+    )
+      .then((cleanup) => {
+        if (active) {
+          unlisten = cleanup;
+        } else {
+          cleanup();
+        }
+      })
+      .catch(() => {
+        // 非 Tauri 环境（例如前端单测）没有事件总线，忽略即可。
+      });
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [queryClient]);
+
   return useQuery({
     queryKey: ["skills", "discoverable"],
-    queryFn: () => skillsApi.discoverAvailable(),
+    queryFn: () => skillsApi.discoverAvailable(false),
     staleTime: Infinity,
     placeholderData: keepPreviousData,
+  });
+}
+
+/** 手动刷新仓库发现结果，绕过持久化缓存并校验远程版本。 */
+export function useRefreshDiscoverableSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => skillsApi.discoverAvailable(true),
+    onSuccess: (skills) => {
+      queryClient.setQueryData(["skills", "discoverable"], skills);
+    },
   });
 }
 

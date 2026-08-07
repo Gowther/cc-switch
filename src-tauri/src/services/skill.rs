@@ -7,16 +7,18 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
-use crate::config::get_app_config_dir;
+use crate::config::{atomic_write, get_app_config_dir};
 use crate::database::Database;
 use crate::error::format_skill_error;
 
@@ -265,6 +267,60 @@ struct SkillBackupMetadata {
 }
 
 const SKILL_BACKUP_RETAIN_COUNT: usize = 20;
+const SKILL_DISCOVERY_CACHE_VERSION: u32 = 1;
+const GITHUB_API_TIMEOUT_SECS: u64 = 20;
+const GITHUB_DISCOVERY_TIMEOUT_SECS: u64 = 60;
+const GITHUB_RAW_CONCURRENCY: usize = 8;
+const GITHUB_USER_AGENT: &str = "cc-switch-skill-discovery";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillDiscoveryCache {
+    version: u32,
+    #[serde(default)]
+    repositories: HashMap<String, SkillRepoCacheEntry>,
+}
+
+impl Default for SkillDiscoveryCache {
+    fn default() -> Self {
+        Self {
+            version: SKILL_DISCOVERY_CACHE_VERSION,
+            repositories: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillRepoCacheEntry {
+    resolved_branch: String,
+    revision: Option<String>,
+    fetched_at: i64,
+    skills: Vec<DiscoverableSkill>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubBranchResponse {
+    commit: GitHubBranchCommit,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubBranchCommit {
+    sha: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubTreeResponse {
+    #[serde(default)]
+    truncated: bool,
+    #[serde(default)]
+    tree: Vec<GitHubTreeEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubTreeEntry {
+    path: String,
+    #[serde(rename = "type")]
+    kind: String,
+}
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -438,7 +494,9 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
 
 // ========== SkillService ==========
 
-pub struct SkillService;
+pub struct SkillService {
+    discovery_lock: Mutex<()>,
+}
 
 impl Default for SkillService {
     fn default() -> Self {
@@ -448,7 +506,9 @@ impl Default for SkillService {
 
 impl SkillService {
     pub fn new() -> Self {
-        Self
+        Self {
+            discovery_lock: Mutex::new(()),
+        }
     }
 
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
@@ -1818,37 +1878,378 @@ impl SkillService {
         Ok(())
     }
 
-    // ========== 发现功能（保留原有逻辑）==========
+    // ========== 发现功能 ==========
 
-    /// 列出所有可发现的技能（从仓库获取）
+    /// 列出所有可发现的技能。已缓存的仓库不会联网，缺失缓存时才执行远程发现。
     pub async fn discover_available(
         &self,
         repos: Vec<SkillRepo>,
     ) -> Result<Vec<DiscoverableSkill>> {
-        let mut skills = Vec::new();
+        self.discover_available_with_progress(repos, false, |_, _| {})
+            .await
+    }
 
-        // 仅使用启用的仓库
+    /// 发现技能，并在每个仓库就绪时回调，供 UI 渐进展示。
+    pub async fn discover_available_with_progress<F>(
+        &self,
+        repos: Vec<SkillRepo>,
+        force_refresh: bool,
+        on_repo_ready: F,
+    ) -> Result<Vec<DiscoverableSkill>>
+    where
+        F: Fn(&SkillRepo, &[DiscoverableSkill]) + Send + Sync,
+    {
+        let _guard = self.discovery_lock.lock().await;
+        let configured_keys: HashSet<String> =
+            repos.iter().map(Self::discovery_cache_key).collect();
         let enabled_repos: Vec<SkillRepo> = repos.into_iter().filter(|repo| repo.enabled).collect();
 
-        let fetch_tasks = enabled_repos
-            .iter()
-            .map(|repo| self.fetch_repo_skills(repo));
+        let mut cache = Self::load_discovery_cache();
+        let previous_cache_len = cache.repositories.len();
+        cache
+            .repositories
+            .retain(|key, _| configured_keys.contains(key));
+        let mut cache_changed = cache.repositories.len() != previous_cache_len;
+        let mut skills = Vec::new();
+        let mut fetch_tasks = FuturesUnordered::new();
 
-        let results: Vec<Result<Vec<DiscoverableSkill>>> =
-            futures::future::join_all(fetch_tasks).await;
+        for repo in enabled_repos {
+            let cache_key = Self::discovery_cache_key(&repo);
+            let cached = cache.repositories.get(&cache_key).cloned();
+            if !force_refresh {
+                if let Some(entry) = cached {
+                    on_repo_ready(&repo, &entry.skills);
+                    skills.extend(entry.skills);
+                    continue;
+                }
+            }
 
-        for (repo, result) in enabled_repos.into_iter().zip(results) {
+            fetch_tasks.push(async move {
+                let result = self.refresh_repo_cache_entry(&repo, cached.as_ref()).await;
+                (cache_key, repo, cached, result)
+            });
+        }
+
+        while let Some((cache_key, repo, cached, result)) = fetch_tasks.next().await {
             match result {
-                Ok(repo_skills) => skills.extend(repo_skills),
-                Err(e) => log::warn!("获取仓库 {}/{} 技能失败: {}", repo.owner, repo.name, e),
+                Ok(entry) => {
+                    on_repo_ready(&repo, &entry.skills);
+                    skills.extend(entry.skills.clone());
+                    cache.repositories.insert(cache_key, entry);
+                    cache_changed = true;
+                }
+                Err(error) => {
+                    log::warn!("获取仓库 {}/{} 技能失败: {error:#}", repo.owner, repo.name);
+                    if let Some(entry) = cached {
+                        on_repo_ready(&repo, &entry.skills);
+                        skills.extend(entry.skills);
+                    }
+                }
             }
         }
 
-        // 去重并排序
+        if cache_changed {
+            if let Err(error) = Self::save_discovery_cache(&cache) {
+                log::warn!("保存 Skill 发现缓存失败: {error:#}");
+            }
+        }
+
         Self::deduplicate_discoverable_skills(&mut skills);
         skills.sort_by_key(|skill| skill.name.to_lowercase());
 
         Ok(skills)
+    }
+
+    fn discovery_cache_path() -> PathBuf {
+        get_app_config_dir()
+            .join("cache")
+            .join("skill-discovery-v1.json")
+    }
+
+    fn discovery_cache_key(repo: &SkillRepo) -> String {
+        format!(
+            "{}/{}/{}",
+            repo.owner.trim().to_lowercase(),
+            repo.name.trim().to_lowercase(),
+            repo.branch.trim().to_lowercase()
+        )
+    }
+
+    fn load_discovery_cache() -> SkillDiscoveryCache {
+        let path = Self::discovery_cache_path();
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return SkillDiscoveryCache::default();
+            }
+            Err(error) => {
+                log::warn!("读取 Skill 发现缓存失败 {}: {error}", path.display());
+                return SkillDiscoveryCache::default();
+            }
+        };
+
+        match serde_json::from_str::<SkillDiscoveryCache>(&content) {
+            Ok(cache) if cache.version == SKILL_DISCOVERY_CACHE_VERSION => cache,
+            Ok(_) => SkillDiscoveryCache::default(),
+            Err(error) => {
+                log::warn!("解析 Skill 发现缓存失败 {}: {error}", path.display());
+                SkillDiscoveryCache::default()
+            }
+        }
+    }
+
+    fn save_discovery_cache(cache: &SkillDiscoveryCache) -> Result<()> {
+        let path = Self::discovery_cache_path();
+        let data = serde_json::to_vec_pretty(cache)?;
+        atomic_write(&path, &data).map_err(|error| anyhow!(error.to_string()))
+    }
+
+    fn repo_branch_candidates(repo: &SkillRepo) -> Vec<String> {
+        let mut branches = Vec::new();
+        if !repo.branch.trim().is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
+            branches.push(repo.branch.trim().to_string());
+        }
+        if !branches.iter().any(|branch| branch == "main") {
+            branches.push("main".to_string());
+        }
+        if !branches.iter().any(|branch| branch == "master") {
+            branches.push("master".to_string());
+        }
+        branches
+    }
+
+    async fn refresh_repo_cache_entry(
+        &self,
+        repo: &SkillRepo,
+        cached: Option<&SkillRepoCacheEntry>,
+    ) -> Result<SkillRepoCacheEntry> {
+        let github_discovery = timeout(
+            std::time::Duration::from_secs(GITHUB_DISCOVERY_TIMEOUT_SECS),
+            self.fetch_repo_skills_from_github(repo, cached),
+        )
+        .await;
+
+        match github_discovery {
+            Ok(Ok(entry)) => return Ok(entry),
+            Ok(Err(error)) => log::warn!(
+                "GitHub 轻量发现 {}/{} 失败，将回退 ZIP: {error:#}",
+                repo.owner,
+                repo.name
+            ),
+            Err(_) => log::warn!(
+                "GitHub 轻量发现 {}/{} 超时，将回退 ZIP",
+                repo.owner,
+                repo.name
+            ),
+        }
+
+        self.fetch_repo_skills_from_zip(repo).await
+    }
+
+    async fn fetch_repo_skills_from_github(
+        &self,
+        repo: &SkillRepo,
+        cached: Option<&SkillRepoCacheEntry>,
+    ) -> Result<SkillRepoCacheEntry> {
+        let mut last_error = None;
+
+        for branch in Self::repo_branch_candidates(repo) {
+            let revision = match self.fetch_github_branch_revision(repo, &branch).await {
+                Ok(revision) => revision,
+                Err(error) => {
+                    last_error = Some(error);
+                    continue;
+                }
+            };
+
+            if let Some(cached) = cached {
+                if cached.resolved_branch == branch
+                    && cached.revision.as_deref() == Some(revision.as_str())
+                {
+                    return Ok(cached.clone());
+                }
+            }
+
+            match self
+                .fetch_github_tree_skills(repo, &branch, &revision)
+                .await
+            {
+                Ok(skills) => {
+                    return Ok(SkillRepoCacheEntry {
+                        resolved_branch: branch,
+                        revision: Some(revision),
+                        fetched_at: Utc::now().timestamp(),
+                        skills,
+                    });
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow!("GitHub 仓库没有可用分支")))
+    }
+
+    async fn fetch_github_branch_revision(&self, repo: &SkillRepo, branch: &str) -> Result<String> {
+        let url = Self::github_url(
+            "https://api.github.com",
+            &["repos", &repo.owner, &repo.name, "branches", branch],
+        )?;
+        let response = crate::proxy::http_client::get()
+            .get(url)
+            .header(reqwest::header::USER_AGENT, GITHUB_USER_AGENT)
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .timeout(std::time::Duration::from_secs(GITHUB_API_TIMEOUT_SECS))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("GitHub branch API 返回 {}", response.status()));
+        }
+
+        let payload: GitHubBranchResponse = response.json().await?;
+        if payload.commit.sha.trim().is_empty() {
+            return Err(anyhow!("GitHub branch API 未返回 commit SHA"));
+        }
+        Ok(payload.commit.sha)
+    }
+
+    async fn fetch_github_tree_skills(
+        &self,
+        repo: &SkillRepo,
+        branch: &str,
+        revision: &str,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        let mut tree_url = Self::github_url(
+            "https://api.github.com",
+            &["repos", &repo.owner, &repo.name, "git", "trees", branch],
+        )?;
+        tree_url.query_pairs_mut().append_pair("recursive", "1");
+
+        let response = crate::proxy::http_client::get()
+            .get(tree_url)
+            .header(reqwest::header::USER_AGENT, GITHUB_USER_AGENT)
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .timeout(std::time::Duration::from_secs(GITHUB_API_TIMEOUT_SECS))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("GitHub tree API 返回 {}", response.status()));
+        }
+
+        let payload: GitHubTreeResponse = response.json().await?;
+        if payload.truncated {
+            return Err(anyhow!("GitHub tree API 返回了截断结果"));
+        }
+
+        let doc_paths = Self::select_skill_doc_paths(&payload.tree);
+        let client = crate::proxy::http_client::get();
+        let owner = repo.owner.clone();
+        let repo_name = repo.name.clone();
+        let revision = revision.to_string();
+        let downloads = futures::stream::iter(doc_paths.into_iter().map(|doc_path| {
+            let client = client.clone();
+            let owner = owner.clone();
+            let repo_name = repo_name.clone();
+            let revision = revision.clone();
+            async move {
+                let url = Self::github_raw_url(&owner, &repo_name, &revision, &doc_path)?;
+                let response = client
+                    .get(url)
+                    .header(reqwest::header::USER_AGENT, GITHUB_USER_AGENT)
+                    .timeout(std::time::Duration::from_secs(GITHUB_API_TIMEOUT_SECS))
+                    .send()
+                    .await?;
+                if !response.status().is_success() {
+                    return Err(anyhow!("下载 {} 返回 {}", doc_path, response.status()));
+                }
+                Ok((doc_path, response.text().await?))
+            }
+        }))
+        .buffer_unordered(GITHUB_RAW_CONCURRENCY)
+        .collect::<Vec<Result<(String, String)>>>()
+        .await;
+
+        let mut resolved_repo = repo.clone();
+        resolved_repo.branch = branch.to_string();
+        let mut skills = Vec::new();
+        for download in downloads {
+            let (doc_path, content) = download?;
+            let directory = Self::skill_directory_from_doc_path(&repo.name, &doc_path);
+            let metadata = Self::parse_skill_metadata_content(&content);
+            skills.push(Self::build_skill_from_metadata_value(
+                metadata,
+                &directory,
+                &doc_path,
+                &resolved_repo,
+            ));
+        }
+        skills.sort_by_key(|skill| skill.name.to_lowercase());
+        Ok(skills)
+    }
+
+    fn github_url(base: &str, segments: &[&str]) -> Result<reqwest::Url> {
+        let mut url = reqwest::Url::parse(base)?;
+        {
+            let mut path = url
+                .path_segments_mut()
+                .map_err(|_| anyhow!("无效的 GitHub URL"))?;
+            path.pop_if_empty();
+            for segment in segments {
+                path.push(segment);
+            }
+        }
+        Ok(url)
+    }
+
+    fn github_raw_url(owner: &str, repo: &str, revision: &str, path: &str) -> Result<reqwest::Url> {
+        let mut segments = vec![owner, repo, revision];
+        segments.extend(path.split('/').filter(|segment| !segment.is_empty()));
+        Self::github_url("https://raw.githubusercontent.com", &segments)
+    }
+
+    fn select_skill_doc_paths(entries: &[GitHubTreeEntry]) -> Vec<String> {
+        let mut paths: Vec<String> = entries
+            .iter()
+            .filter(|entry| {
+                entry.kind == "blob"
+                    && (entry.path == "SKILL.md" || entry.path.ends_with("/SKILL.md"))
+            })
+            .map(|entry| entry.path.clone())
+            .collect();
+        paths.sort_by_key(|path| path.matches('/').count());
+
+        let mut selected_paths = Vec::new();
+        let mut selected_dirs: Vec<String> = Vec::new();
+        for path in paths {
+            let parent = path
+                .strip_suffix("/SKILL.md")
+                .unwrap_or_else(|| if path == "SKILL.md" { "" } else { &path })
+                .to_string();
+            let nested_under_selected = selected_dirs.iter().any(|selected| {
+                selected.is_empty()
+                    || parent == *selected
+                    || parent.starts_with(&format!("{selected}/"))
+            });
+            if nested_under_selected {
+                continue;
+            }
+            selected_dirs.push(parent);
+            selected_paths.push(path);
+        }
+        selected_paths
+    }
+
+    fn skill_directory_from_doc_path(repo_name: &str, doc_path: &str) -> String {
+        if doc_path == "SKILL.md" {
+            return repo_name.to_string();
+        }
+        doc_path
+            .strip_suffix("/SKILL.md")
+            .unwrap_or(doc_path)
+            .to_string()
     }
 
     /// 列出所有技能（兼容旧 API）
@@ -1918,8 +2319,8 @@ impl SkillService {
         Ok(skills)
     }
 
-    /// 从仓库获取技能列表
-    async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
+    /// 通过完整 ZIP 获取技能列表（GitHub 轻量发现失败时的兜底路径）
+    async fn fetch_repo_skills_from_zip(&self, repo: &SkillRepo) -> Result<SkillRepoCacheEntry> {
         let (temp_dir, resolved_branch) =
             timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
                 .await
@@ -1939,11 +2340,18 @@ impl SkillService {
         let scan_dir = temp_dir.clone();
         let mut resolved_repo = repo.clone();
         resolved_repo.branch = resolved_branch;
-        self.scan_dir_recursive(&scan_dir, &scan_dir, &resolved_repo, &mut skills)?;
+        let scan_result =
+            self.scan_dir_recursive(&scan_dir, &scan_dir, &resolved_repo, &mut skills);
 
         let _ = fs::remove_dir_all(&temp_dir);
+        scan_result?;
 
-        Ok(skills)
+        Ok(SkillRepoCacheEntry {
+            resolved_branch: resolved_repo.branch,
+            revision: None,
+            fetched_at: Utc::now().timestamp(),
+            skills,
+        })
     }
 
     /// 递归扫描目录查找 SKILL.md
@@ -2003,8 +2411,18 @@ impl SkillService {
         repo: &SkillRepo,
     ) -> Result<DiscoverableSkill> {
         let meta = self.parse_skill_metadata(skill_md)?;
+        Ok(Self::build_skill_from_metadata_value(
+            meta, directory, doc_path, repo,
+        ))
+    }
 
-        Ok(DiscoverableSkill {
+    fn build_skill_from_metadata_value(
+        meta: SkillMetadata,
+        directory: &str,
+        doc_path: &str,
+        repo: &SkillRepo,
+    ) -> DiscoverableSkill {
+        DiscoverableSkill {
             key: format!("{}/{}:{}", repo.owner, repo.name, directory),
             name: meta.name.unwrap_or_else(|| directory.to_string()),
             description: meta.description.unwrap_or_default(),
@@ -2018,7 +2436,7 @@ impl SkillService {
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
-        })
+        }
     }
 
     /// 解析技能元数据
@@ -2029,23 +2447,25 @@ impl SkillService {
     /// 静态方法：解析技能元数据
     fn parse_skill_metadata_static(path: &Path) -> Result<SkillMetadata> {
         let content = fs::read_to_string(path)?;
+        Ok(Self::parse_skill_metadata_content(&content))
+    }
+
+    fn parse_skill_metadata_content(content: &str) -> SkillMetadata {
         let content = content.trim_start_matches('\u{feff}');
 
         let parts: Vec<&str> = content.splitn(3, "---").collect();
         if parts.len() < 3 {
-            return Ok(SkillMetadata {
+            return SkillMetadata {
                 name: None,
                 description: None,
-            });
+            };
         }
 
         let front_matter = parts[1].trim();
-        let meta: SkillMetadata = serde_yaml::from_str(front_matter).unwrap_or(SkillMetadata {
+        serde_yaml::from_str(front_matter).unwrap_or(SkillMetadata {
             name: None,
             description: None,
-        });
-
-        Ok(meta)
+        })
     }
 
     /// 从 SKILL.md 读取名称和描述，不存在则用目录名兜底
@@ -2209,19 +2629,8 @@ impl SkillService {
         let temp_path = temp_dir.path().to_path_buf();
         let _ = temp_dir.keep();
 
-        let mut branches = Vec::new();
-        if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
-            branches.push(repo.branch.as_str());
-        }
-        if !branches.contains(&"main") {
-            branches.push("main");
-        }
-        if !branches.contains(&"master") {
-            branches.push("master");
-        }
-
         let mut last_error = None;
-        for branch in branches {
+        for branch in Self::repo_branch_candidates(repo) {
             let url = format!(
                 "https://github.com/{}/{}/archive/refs/heads/{}.zip",
                 repo.owner, repo.name, branch
@@ -2229,15 +2638,18 @@ impl SkillService {
 
             match self.download_and_extract(&url, &temp_path).await {
                 Ok(_) => {
-                    return Ok((temp_path, branch.to_string()));
+                    return Ok((temp_path, branch));
                 }
                 Err(e) => {
                     last_error = Some(e);
+                    let _ = fs::remove_dir_all(&temp_path);
+                    let _ = fs::create_dir_all(&temp_path);
                     continue;
                 }
             }
         }
 
+        let _ = fs::remove_dir_all(&temp_path);
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
     }
 
@@ -3123,5 +3535,83 @@ mod tests {
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
         );
+    }
+
+    #[test]
+    fn select_skill_doc_paths_matches_scan_semantics_for_nested_skills() {
+        let entries = vec![
+            GitHubTreeEntry {
+                path: "SKILL.md".to_string(),
+                kind: "blob".to_string(),
+            },
+            GitHubTreeEntry {
+                path: "skills/child/SKILL.md".to_string(),
+                kind: "blob".to_string(),
+            },
+            GitHubTreeEntry {
+                path: "tools/SKILL.md".to_string(),
+                kind: "blob".to_string(),
+            },
+            GitHubTreeEntry {
+                path: "README.md".to_string(),
+                kind: "blob".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            SkillService::select_skill_doc_paths(&entries),
+            vec!["SKILL.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn select_skill_doc_paths_keeps_independent_skill_directories() {
+        let entries = vec![
+            GitHubTreeEntry {
+                path: "skills/one/SKILL.md".to_string(),
+                kind: "blob".to_string(),
+            },
+            GitHubTreeEntry {
+                path: "skills/one/examples/SKILL.md".to_string(),
+                kind: "blob".to_string(),
+            },
+            GitHubTreeEntry {
+                path: "skills/two/SKILL.md".to_string(),
+                kind: "blob".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            SkillService::select_skill_doc_paths(&entries),
+            vec![
+                "skills/one/SKILL.md".to_string(),
+                "skills/two/SKILL.md".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn discovery_cache_key_includes_repository_branch() {
+        let repo = SkillRepo {
+            owner: "Owner".to_string(),
+            name: "Repo".to_string(),
+            branch: " Main ".to_string(),
+            enabled: true,
+        };
+
+        assert_eq!(
+            SkillService::discovery_cache_key(&repo),
+            "owner/repo/main".to_string()
+        );
+    }
+
+    #[test]
+    fn parse_skill_metadata_content_handles_front_matter() {
+        let metadata = SkillService::parse_skill_metadata_content(
+            "---\nname: Find Skills\ndescription: Find useful skills\n---\n",
+        );
+
+        assert_eq!(metadata.name.as_deref(), Some("Find Skills"));
+        assert_eq!(metadata.description.as_deref(), Some("Find useful skills"));
     }
 }

@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
-import type { InstalledSkill } from "@/lib/api/skills";
+import {
+  mergeDiscoverableRepoSkills,
+  mergeImportedSkills,
+} from "@/hooks/useSkills.helpers";
+import type { DiscoverableSkill, InstalledSkill } from "@/lib/api/skills";
 
 function makeSkill(overrides: Partial<InstalledSkill> = {}): InstalledSkill {
   return {
@@ -17,6 +20,21 @@ function makeSkill(overrides: Partial<InstalledSkill> = {}): InstalledSkill {
     },
     installedAt: 0,
     updatedAt: 0,
+    ...overrides,
+  };
+}
+
+function makeDiscoverable(
+  overrides: Partial<DiscoverableSkill> = {},
+): DiscoverableSkill {
+  return {
+    key: "owner/repo:skill-a",
+    name: "Skill A",
+    description: "",
+    directory: "skill-a",
+    repoOwner: "owner",
+    repoName: "repo",
+    repoBranch: "main",
     ...overrides,
   };
 }
@@ -58,5 +76,42 @@ describe("mergeImportedSkills", () => {
     ];
     const merged = mergeImportedSkills(existing, imported);
     expect(merged.map((s) => s.id).sort()).toEqual(["skill-a", "skill-b"]);
+  });
+});
+
+describe("mergeDiscoverableRepoSkills", () => {
+  it("replaces one repository without dropping other repositories", () => {
+    const existing = [
+      makeDiscoverable(),
+      makeDiscoverable({
+        key: "other/repo:skill-b",
+        name: "Skill B",
+        repoOwner: "other",
+        repoName: "repo",
+      }),
+    ];
+    const update = {
+      repoOwner: "OWNER",
+      repoName: "REPO",
+      skills: [makeDiscoverable({ name: "Fresh Skill" })],
+    };
+
+    const merged = mergeDiscoverableRepoSkills(existing, update);
+
+    expect(merged.map((skill) => skill.name)).toEqual([
+      "Fresh Skill",
+      "Skill B",
+    ]);
+  });
+
+  it("removes a repository when its refreshed result is empty", () => {
+    const existing = [makeDiscoverable()];
+    const merged = mergeDiscoverableRepoSkills(existing, {
+      repoOwner: "owner",
+      repoName: "repo",
+      skills: [],
+    });
+
+    expect(merged).toEqual([]);
   });
 });

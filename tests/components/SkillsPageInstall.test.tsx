@@ -19,6 +19,7 @@ const installMutateAsyncMock = vi.fn();
 let discoverableSkillsMock: DiscoverableSkill[] = [];
 let skillReposMock: SkillRepo[] = [];
 const refetchDiscoverableMock = vi.fn();
+const refreshDiscoverableMock = vi.fn();
 
 // Stable cache so repeated renders see referentially-equal data.
 // SkillsPage has `useEffect([skillsShResult, ...])` that calls setState — a
@@ -65,6 +66,10 @@ vi.mock("@/hooks/useSkills", () => ({
     isLoading: false,
     isFetching: false,
     refetch: refetchDiscoverableMock,
+  }),
+  useRefreshDiscoverableSkills: () => ({
+    mutateAsync: refreshDiscoverableMock,
+    isPending: false,
   }),
   useInstalledSkills: () => ({
     data: [],
@@ -133,6 +138,7 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     discoverableSkillsMock = [];
     skillReposMock = [];
     refetchDiscoverableMock.mockReset();
+    refreshDiscoverableMock.mockReset();
     searchCache.clear();
   });
 

@@ -27,6 +27,7 @@ import { SkillCard } from "./SkillCard";
 import { RepoManagerPanel } from "./RepoManagerPanel";
 import {
   useDiscoverableSkills,
+  useRefreshDiscoverableSkills,
   useInstalledSkills,
   useInstallSkill,
   useSkillRepos,
@@ -153,6 +154,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     // Mutations
     const installMutation = useInstallSkill();
+    const refreshDiscoverableMutation = useRefreshDiscoverableSkills();
     const addRepoMutation = useAddSkillRepo();
     const removeRepoMutation = useRemoveSkillRepo();
 
@@ -206,15 +208,20 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       return installedKeys.has(key);
     };
 
-    const loading =
-      searchSource === "repos"
-        ? loadingDiscoverable || fetchingDiscoverable
-        : false;
+    const discoveryBusy =
+      searchSource === "repos" &&
+      (loadingDiscoverable ||
+        fetchingDiscoverable ||
+        refreshDiscoverableMutation.isPending);
+    // 刷新期间保留旧列表；首次没有任何结果时才显示整页 loading。
+    const loading = discoveryBusy && skills.length === 0;
 
     useImperativeHandle(ref, () => ({
       refresh: () => {
-        refetchDiscoverable();
-        refetchRepos();
+        if (!refreshDiscoverableMutation.isPending) {
+          refreshDiscoverableMutation.mutate();
+        }
+        void refetchRepos();
       },
       openRepoManager: () => setRepoManagerOpen(true),
     }));
