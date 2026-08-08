@@ -35,7 +35,7 @@ describe("common config snippet saving", () => {
     const onConfigChange = vi.fn();
     const { result } = renderHook(() =>
       useCodexCommonConfig({
-        codexConfig: "model = \"gpt-5\"",
+        codexConfig: 'model = "gpt-5"',
         onConfigChange,
       }),
     );
@@ -150,10 +150,13 @@ describe("common config snippet saving", () => {
 
   it("does not persist an invalid Gemini common config snippet", async () => {
     const onEnvChange = vi.fn();
+    const onConfigChange = vi.fn();
     const { result } = renderHook(() =>
       useGeminiCommonConfig({
         envValue: "",
         onEnvChange,
+        configValue: "{}",
+        onConfigChange,
         envStringToObj: () => ({}),
         envObjToString: () => "",
       }),
@@ -171,8 +174,65 @@ describe("common config snippet saving", () => {
     expect(saved).toBe(false);
     expect(setCommonConfigSnippetMock).not.toHaveBeenCalled();
     expect(onEnvChange).not.toHaveBeenCalled();
+    expect(onConfigChange).not.toHaveBeenCalled();
     expect(result.current.commonConfigError).toBe(
       "geminiConfig.commonConfigInvalidValues",
+    );
+  });
+
+  it("applies Gemini env and config from the same common snippet", async () => {
+    getCommonConfigSnippetMock.mockResolvedValue(
+      JSON.stringify({
+        env: { GEMINI_MODEL: "gemini-3.5-flash" },
+        config: { theme: "Default" },
+      }),
+    );
+
+    const onEnvChange = vi.fn();
+    const onConfigChange = vi.fn();
+    const { result } = renderHook(() =>
+      useGeminiCommonConfig({
+        envValue: "GEMINI_API_KEY=secret",
+        onEnvChange,
+        configValue: JSON.stringify({ general: { previewFeatures: true } }),
+        onConfigChange,
+        envStringToObj: (value) =>
+          Object.fromEntries(
+            value
+              .split("\n")
+              .filter(Boolean)
+              .map((line) => line.split("=", 2)),
+          ),
+        envObjToString: (env) =>
+          Object.entries(env)
+            .map(([key, value]) => `${key}=${String(value)}`)
+            .join("\n"),
+        initialData: {
+          settingsConfig: {
+            env: { GEMINI_API_KEY: "secret" },
+            config: { general: { previewFeatures: true } },
+          },
+        },
+        initialEnabled: false,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await waitFor(() => expect(result.current.useCommonConfig).toBe(false));
+
+    act(() => {
+      result.current.handleCommonConfigToggle(true);
+    });
+
+    expect(result.current.useCommonConfig).toBe(true);
+    expect(onEnvChange).toHaveBeenLastCalledWith(
+      expect.stringContaining("GEMINI_MODEL=gemini-3.5-flash"),
+    );
+    expect(JSON.parse(onConfigChange.mock.calls.at(-1)?.[0] as string)).toEqual(
+      {
+        general: { previewFeatures: true },
+        theme: "Default",
+      },
     );
   });
 });

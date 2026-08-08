@@ -142,6 +142,72 @@ fn json_deep_remove(target: &mut Value, source: &Value) {
     }
 }
 
+/// Gemini common snippets used to be a flat env object. New snippets use
+/// `{ "env": {...}, "config": {...} }` so the JSON settings file can be shared
+/// as well. Accept both shapes to keep existing installations compatible.
+fn parse_gemini_common_config(snippet: &str) -> Result<(Value, Value), AppError> {
+    let source = serde_json::from_str::<Value>(snippet)
+        .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
+    let source_map = source.as_object().ok_or_else(|| {
+        AppError::Message("Invalid Gemini common config: expected a JSON object".to_string())
+    })?;
+
+    let structured = source_map.contains_key("env") || source_map.contains_key("config");
+    if !structured {
+        return Ok((source, json!({})));
+    }
+
+    let env = source_map.get("env").cloned().unwrap_or_else(|| json!({}));
+    let config = source_map
+        .get("config")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+
+    if !env.is_object() || !config.is_object() {
+        return Err(AppError::Message(
+            "Invalid Gemini common config: env and config must be JSON objects".to_string(),
+        ));
+    }
+
+    Ok((env, config))
+}
+
+fn json_object_has_content(value: &Value) -> bool {
+    value.as_object().is_some_and(|object| !object.is_empty())
+}
+
+pub(crate) fn common_config_snippet_has_content(
+    app_type: &AppType,
+    snippet: &str,
+) -> Result<bool, AppError> {
+    let trimmed = snippet.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+
+    match app_type {
+        AppType::Claude => {
+            let value = serde_json::from_str::<Value>(trimmed)
+                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+            Ok(json_object_has_content(&value))
+        }
+        AppType::Codex => {
+            let document = trimmed.parse::<DocumentMut>().map_err(|e| {
+                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
+            })?;
+            let has_content = document.as_table().iter().next().is_some();
+            Ok(has_content)
+        }
+        AppType::Gemini => {
+            let (env, config) = parse_gemini_common_config(trimmed)?;
+            Ok(json_object_has_content(&env) || json_object_has_content(&config))
+        }
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+            Ok(false)
+        }
+    }
+}
+
 fn toml_value_is_subset(target: &toml_edit::Value, source: &toml_edit::Value) -> bool {
     match (target, source) {
         (toml_edit::Value::String(target), toml_edit::Value::String(source)) => {
@@ -368,19 +434,25 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
 
             toml_item_is_subset(target_doc.as_item(), source_doc.as_item())
         }
-        AppType::Gemini => match serde_json::from_str::<Value>(trimmed) {
-            Ok(Value::Object(source_map)) => {
-                let Some(target_map) = settings.get("env").and_then(Value::as_object) else {
-                    return false;
-                };
-                source_map.iter().all(|(key, source_value)| {
-                    target_map
-                        .get(key)
-                        .is_some_and(|target_value| json_is_subset(target_value, source_value))
-                })
+        AppType::Gemini => {
+            let Ok((env_source, config_source)) = parse_gemini_common_config(trimmed) else {
+                return false;
+            };
+            let env_has_content = json_object_has_content(&env_source);
+            let config_has_content = json_object_has_content(&config_source);
+            if !env_has_content && !config_has_content {
+                return false;
             }
-            _ => false,
-        },
+
+            (!env_has_content
+                || settings
+                    .get("env")
+                    .is_some_and(|target| json_is_subset(target, &env_source)))
+                && (!config_has_content
+                    || settings
+                        .get("config")
+                        .is_some_and(|target| json_is_subset(target, &config_source)))
+        }
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
     }
 }
@@ -443,11 +515,17 @@ pub(crate) fn remove_common_config_from_settings(
             Ok(result)
         }
         AppType::Gemini => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
+            let (env_source, config_source) = parse_gemini_common_config(trimmed)?;
             let mut result = settings.clone();
-            if let Some(env) = result.get_mut("env") {
-                json_deep_remove(env, &source);
+            if json_object_has_content(&env_source) {
+                if let Some(env) = result.get_mut("env") {
+                    json_deep_remove(env, &env_source);
+                }
+            }
+            if json_object_has_content(&config_source) {
+                if let Some(config) = result.get_mut("config") {
+                    json_deep_remove(config, &config_source);
+                }
             }
             Ok(result)
         }
@@ -498,13 +576,21 @@ fn apply_common_config_to_settings(
             Ok(result)
         }
         AppType::Gemini => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
+            let (env_source, config_source) = parse_gemini_common_config(trimmed)?;
             let mut result = settings.clone();
-            if let Some(env) = result.get_mut("env") {
-                json_deep_merge(env, &source);
-            } else if let Some(obj) = result.as_object_mut() {
-                obj.insert("env".to_string(), source);
+            if json_object_has_content(&env_source) {
+                if let Some(env) = result.get_mut("env") {
+                    json_deep_merge(env, &env_source);
+                } else if let Some(obj) = result.as_object_mut() {
+                    obj.insert("env".to_string(), env_source);
+                }
+            }
+            if json_object_has_content(&config_source) {
+                if let Some(config) = result.get_mut("config") {
+                    json_deep_merge(config, &config_source);
+                } else if let Some(obj) = result.as_object_mut() {
+                    obj.insert("config".to_string(), config_source);
+                }
             }
             Ok(result)
         }
@@ -1818,6 +1904,85 @@ base_url = "https://a.example/v1"
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn gemini_common_config_apply_and_remove_roundtrip_for_env_and_config() {
+        let settings = json!({
+            "env": {
+                "GEMINI_API_KEY": "secret"
+            },
+            "config": {
+                "security": {
+                    "auth": {
+                        "selectedType": "gemini-api-key"
+                    }
+                }
+            }
+        });
+        let snippet = r#"{
+  "env": {
+    "GEMINI_MODEL": "gemini-3.5-flash"
+  },
+  "config": {
+    "theme": "Default",
+    "general": {
+      "previewFeatures": true
+    }
+  }
+}"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Gemini, &settings, snippet).unwrap();
+        assert_eq!(applied["env"]["GEMINI_MODEL"], json!("gemini-3.5-flash"));
+        assert_eq!(applied["config"]["theme"], json!("Default"));
+        assert_eq!(applied["config"]["general"]["previewFeatures"], json!(true));
+        assert_eq!(
+            applied["config"]["security"]["auth"]["selectedType"],
+            json!("gemini-api-key")
+        );
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Gemini, &applied, snippet).unwrap();
+        assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn gemini_legacy_flat_common_config_still_targets_env() {
+        let settings = json!({
+            "env": {
+                "GEMINI_API_KEY": "secret"
+            },
+            "config": {
+                "theme": "Default"
+            }
+        });
+        let snippet = r#"{ "GEMINI_MODEL": "gemini-3.5-flash" }"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Gemini, &settings, snippet).unwrap();
+        assert_eq!(applied["env"]["GEMINI_MODEL"], json!("gemini-3.5-flash"));
+        assert_eq!(applied["config"], settings["config"]);
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Gemini, &applied, snippet).unwrap();
+        assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn common_config_content_detection_rejects_empty_structures() {
+        assert!(!common_config_snippet_has_content(&AppType::Claude, "{}").unwrap());
+        assert!(!common_config_snippet_has_content(&AppType::Codex, "# comment only\n").unwrap());
+        assert!(!common_config_snippet_has_content(
+            &AppType::Gemini,
+            r#"{ "env": {}, "config": {} }"#,
+        )
+        .unwrap());
+        assert!(common_config_snippet_has_content(
+            &AppType::Gemini,
+            r#"{ "config": { "theme": "Default" } }"#,
+        )
+        .unwrap());
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Save, Download, Loader2, Package } from "lucide-react";
+import { Save, Download, Loader2, Package, CheckCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,8 @@ interface GeminiCommonConfigModalProps {
   error?: string;
   onExtract?: () => void;
   isExtracting?: boolean;
+  onEnableAll?: (value: string) => Promise<boolean>;
+  isEnablingAll?: boolean;
 }
 
 /**
@@ -21,7 +23,17 @@ interface GeminiCommonConfigModalProps {
  */
 export const GeminiCommonConfigModal: React.FC<
   GeminiCommonConfigModalProps
-> = ({ isOpen, onClose, value, onSave, error, onExtract, isExtracting }) => {
+> = ({
+  isOpen,
+  onClose,
+  value,
+  onSave,
+  error,
+  onExtract,
+  isExtracting,
+  onEnableAll,
+  isEnablingAll = false,
+}) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [draftValue, setDraftValue] = useState(value);
@@ -85,6 +97,28 @@ export const GeminiCommonConfigModal: React.FC<
               })}
             </Button>
           )}
+          {onEnableAll && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                void onEnableAll(draftValue).then((enabled) => {
+                  if (enabled) handleClose();
+                });
+              }}
+              disabled={isEnablingAll || !draftValue.trim()}
+              className="gap-2"
+            >
+              {isEnablingAll ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <CheckCheck className="w-4 h-4" />
+              )}
+              {t("commonConfig.enableAll", {
+                defaultValue: "为全部供应商启用",
+              })}
+            </Button>
+          )}
           <Button type="button" variant="outline" onClick={handleClose}>
             {t("common.cancel")}
           </Button>
@@ -116,7 +150,7 @@ export const GeminiCommonConfigModal: React.FC<
         <p className="text-xs text-amber-600 dark:text-amber-400">
           {t("geminiConfig.commonConfigHint", {
             defaultValue:
-              "该片段会写入 Gemini 的 .env（不允许包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
+              "该片段会共享 Gemini 的 env 和 config；供应商 URL 与凭据不会进入通用配置。",
           })}
         </p>
         {(!draftValue ||
@@ -135,7 +169,12 @@ export const GeminiCommonConfigModal: React.FC<
           value={draftValue}
           onChange={setDraftValue}
           placeholder={`{
-  "GEMINI_MODEL": "gemini-3.5-flash"
+  "env": {
+    "GEMINI_MODEL": "gemini-3.5-flash"
+  },
+  "config": {
+    "theme": "Default"
+  }
 }`}
           darkMode={isDarkMode}
           rows={16}

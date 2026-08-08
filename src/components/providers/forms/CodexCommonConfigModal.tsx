@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Save, Download, Loader2, Package } from "lucide-react";
+import { Save, Download, Loader2, Package, CheckCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,9 @@ interface CodexCommonConfigModalProps {
   error?: string;
   onExtract?: () => void;
   isExtracting?: boolean;
+  onEnableAll?: (value: string) => Promise<boolean>;
+  isEnablingAll?: boolean;
+  isBusy?: boolean;
 }
 
 /**
@@ -27,6 +30,9 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   error,
   onExtract,
   isExtracting,
+  onEnableAll,
+  isEnablingAll = false,
+  isBusy = false,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -76,7 +82,7 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
               type="button"
               variant="outline"
               onClick={onExtract}
-              disabled={isExtracting}
+              disabled={isBusy || isExtracting}
               className="gap-2"
             >
               {isExtracting ? (
@@ -89,10 +95,42 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
               })}
             </Button>
           )}
-          <Button type="button" variant="outline" onClick={handleClose}>
+          {onEnableAll && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                void onEnableAll(draftValue).then((enabled) => {
+                  if (enabled) handleClose();
+                });
+              }}
+              disabled={isBusy || isEnablingAll || !draftValue.trim()}
+              className="gap-2"
+            >
+              {isEnablingAll ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <CheckCheck className="w-4 h-4" />
+              )}
+              {t("commonConfig.enableAll", {
+                defaultValue: "为全部供应商启用",
+              })}
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleClose}
+            disabled={isBusy}
+          >
             {t("common.cancel")}
           </Button>
-          <Button type="button" onClick={handleSave} className="gap-2">
+          <Button
+            type="button"
+            onClick={handleSave}
+            disabled={isBusy}
+            className="gap-2"
+          >
             <Save className="w-4 h-4" />
             {t("common.save")}
           </Button>

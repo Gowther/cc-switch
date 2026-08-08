@@ -713,6 +713,15 @@ mod tests {
                 "AWS_BEARER_TOKEN_BEDROCK": "bedrock-tok",
                 "ANTHROPIC_BASE_URL": "https://example.com",
                 "ANTHROPIC_MODEL": "claude-x",
+                "ANTHROPIC_REASONING_MODEL": "claude-reasoning-x",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-mapped",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Haiku Mapped",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-mapped[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet Mapped",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped[1M]",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus Mapped",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL": "fable-mapped[1M]",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "Fable Mapped",
                 "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini",
                 // 可共享、非机密配置（复数 _TOKENS 不应被误剥）
                 "ENABLE_TOOL_SEARCH": "true",
@@ -720,6 +729,8 @@ mod tests {
             },
             "apiKey": "sk-top",
             "api_key": "sk-top2",
+            "primaryModel": "legacy-primary",
+            "smallFastModel": "legacy-small",
             "theme": "dark",
             "includeCoAuthoredBy": false
         });
@@ -753,12 +764,28 @@ mod tests {
             "top-level credentials must be stripped"
         );
 
-        // 端点/模型（provider-specific 非机密）也应剥掉
+        // 端点/模型（provider-specific 非机密）也应剥掉，保持与上游通用配置规则一致。
         assert!(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")).is_none());
-        assert!(env.and_then(|e| e.get("ANTHROPIC_MODEL")).is_none());
-        assert!(env
-            .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
-            .is_none());
+        for stripped in [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ] {
+            assert!(
+                env.and_then(|e| e.get(stripped)).is_none(),
+                "provider-specific model key {stripped} must not enter common config"
+            );
+        }
+        assert!(value.get("primaryModel").is_none());
+        assert!(value.get("smallFastModel").is_none());
 
         // 可共享的非机密配置必须保留（含复数 _TOKENS 不被误剥）
         assert_eq!(
@@ -831,6 +858,7 @@ mod tests {
         // [mcp.servers] 是历史错误格式，sync_all_enabled 清不掉它。
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
+model_reasoning_effort = "max"
 wire_api = "chat"
 disable_response_storage = true
 experimental_bearer_token = "sk-live-secret"
@@ -862,8 +890,14 @@ command = "legacy-cmd"
         assert!(
             !extracted
                 .lines()
-                .any(|line| line.trim_start().starts_with("model =")),
-            "should remove top-level model"
+                .any(|line| line.trim_start().starts_with("model = \"gpt-4\"")),
+            "user-selected model should stay provider-owned, got: {extracted}"
+        );
+        assert!(
+            !extracted
+                .lines()
+                .any(|line| line.trim_start().starts_with("model_reasoning_effort")),
+            "reasoning effort should stay provider-owned, got: {extracted}"
         );
         assert!(
             !extracted.contains("[model_providers"),
@@ -903,6 +937,154 @@ command = "legacy-cmd"
             extracted.contains("disable_response_storage = true"),
             "shareable keys must survive extraction, got: {extracted}"
         );
+    }
+
+    #[test]
+    fn extract_gemini_common_config_keeps_regular_settings_and_strips_credentials() {
+        let settings = json!({
+            "env": {
+                "GOOGLE_GEMINI_BASE_URL": "https://provider.example",
+                "GEMINI_API_KEY": "secret",
+                "GOOGLE_API_KEY": "another-secret",
+                "GEMINI_MODEL": "gemini-3.5-flash",
+                "CUSTOM_SETTING": "enabled"
+            },
+            "config": {
+                "theme": "Default",
+                "general": {
+                    "previewFeatures": true
+                }
+            }
+        });
+
+        let snippet = ProviderService::extract_gemini_common_config(&settings)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+
+        assert!(value["env"].get("GOOGLE_GEMINI_BASE_URL").is_none());
+        assert!(value["env"].get("GEMINI_API_KEY").is_none());
+        assert!(value["env"].get("GOOGLE_API_KEY").is_none());
+        assert_eq!(value["env"]["GEMINI_MODEL"], json!("gemini-3.5-flash"));
+        assert_eq!(value["env"]["CUSTOM_SETTING"], json!("enabled"));
+        assert_eq!(value["config"]["theme"], json!("Default"));
+        assert_eq!(value["config"]["general"]["previewFeatures"], json!(true));
+    }
+
+    #[test]
+    #[serial]
+    fn bulk_common_config_toggle_normalizes_and_materializes_provider_settings() {
+        with_test_home(|state, _| {
+            state
+                .db
+                .set_config_snippet("claude", Some(r#"{ "theme": "dark" }"#.to_string()))
+                .expect("save common snippet");
+
+            let first = Provider::with_id(
+                "first".to_string(),
+                "First".to_string(),
+                json!({
+                    "env": { "ANTHROPIC_API_KEY": "secret-1" },
+                    "theme": "dark"
+                }),
+                None,
+            );
+            let second = Provider::with_id(
+                "second".to_string(),
+                "Second".to_string(),
+                json!({
+                    "env": { "ANTHROPIC_API_KEY": "secret-2" },
+                    "theme": "light"
+                }),
+                None,
+            );
+            state
+                .db
+                .save_provider("claude", &first)
+                .expect("save first");
+            state
+                .db
+                .save_provider("claude", &second)
+                .expect("save second");
+
+            let enabled =
+                ProviderService::set_common_config_enabled_for_all(state, AppType::Claude, true)
+                    .expect("enable common config for all");
+            assert_eq!(enabled, 2);
+
+            let first = state
+                .db
+                .get_provider_by_id("first", "claude")
+                .expect("load first")
+                .expect("first exists");
+            assert_eq!(
+                first
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.common_config_enabled),
+                Some(true)
+            );
+            assert!(first.settings_config.get("theme").is_none());
+
+            let disabled =
+                ProviderService::set_common_config_enabled_for_all(state, AppType::Claude, false)
+                    .expect("disable common config for all");
+            assert_eq!(disabled, 2);
+
+            for id in ["first", "second"] {
+                let provider = state
+                    .db
+                    .get_provider_by_id(id, "claude")
+                    .expect("load provider")
+                    .expect("provider exists");
+                assert_eq!(
+                    provider
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.common_config_enabled),
+                    Some(false)
+                );
+                assert_eq!(provider.settings_config["theme"], json!("dark"));
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn bulk_common_config_enable_rejects_empty_snippet() {
+        with_test_home(|state, _| {
+            state
+                .db
+                .set_config_snippet("codex", Some("# comment only\n".to_string()))
+                .expect("save common snippet");
+            let provider = Provider::with_id(
+                "codex".to_string(),
+                "Codex".to_string(),
+                codex_settings("https://example.com/v1", "secret"),
+                None,
+            );
+            state
+                .db
+                .save_provider("codex", &provider)
+                .expect("save provider");
+
+            let error =
+                ProviderService::set_common_config_enabled_for_all(state, AppType::Codex, true)
+                    .expect_err("comment-only snippet must not enable providers");
+            assert!(error.to_string().contains("no settings"));
+
+            let stored = state
+                .db
+                .get_provider_by_id("codex", "codex")
+                .expect("load provider")
+                .expect("provider exists");
+            assert_eq!(
+                stored
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.common_config_enabled),
+                None
+            );
+        });
     }
 
     #[test]
@@ -2635,6 +2817,75 @@ impl ProviderService {
         sync_current_provider_for_app_to_live(state, &app_type)
     }
 
+    /// Enable or disable runtime common-config inheritance for every provider
+    /// of an exclusive-mode app. Enabling normalizes stored providers back to
+    /// their provider-specific delta; disabling materializes the effective
+    /// settings first so no shared values disappear.
+    pub fn set_common_config_enabled_for_all(
+        state: &AppState,
+        app_type: AppType,
+        enabled: bool,
+    ) -> Result<usize, AppError> {
+        if !matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
+            return Err(AppError::Message(format!(
+                "App {} does not support common config inheritance",
+                app_type.as_str()
+            )));
+        }
+
+        if enabled {
+            let snippet = state
+                .db
+                .get_config_snippet(app_type.as_str())?
+                .ok_or_else(|| {
+                    AppError::Message(format!(
+                        "No common config is configured for {}",
+                        app_type.as_str()
+                    ))
+                })?;
+            if !live::common_config_snippet_has_content(&app_type, &snippet)? {
+                return Err(AppError::Message(format!(
+                    "Common config for {} has no settings to apply",
+                    app_type.as_str()
+                )));
+            }
+        }
+
+        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let mut updated_count = 0usize;
+
+        for provider in providers.values() {
+            let mut updated = provider.clone();
+
+            if !enabled {
+                updated.settings_config = build_effective_settings_with_common_config(
+                    state.db.as_ref(),
+                    &app_type,
+                    provider,
+                )?;
+            }
+
+            updated
+                .meta
+                .get_or_insert_with(Default::default)
+                .common_config_enabled = Some(enabled);
+
+            if enabled {
+                normalize_provider_common_config_for_storage(
+                    state.db.as_ref(),
+                    &app_type,
+                    &mut updated,
+                )?;
+            }
+
+            state.db.save_provider(app_type.as_str(), &updated)?;
+            updated_count += 1;
+        }
+
+        Self::sync_current_provider_for_app(state, app_type)?;
+        Ok(updated_count)
+    }
+
     pub fn migrate_legacy_common_config_usage(
         state: &AppState,
         app_type: AppType,
@@ -2723,11 +2974,12 @@ impl ProviderService {
     /// 不会误删其它供应商共享的内容。
     ///
     /// **作用域**：Claude + Codex。Codex 提取器（`extract_codex_common_config`）
-    /// 已剥离全部供应商专属与 cc-switch 注入内容：`model` / `model_provider` /
-    /// 顶层 `base_url` / 整张 `model_providers` 表（含端点与统一会话桶）、
-    /// `mcp_servers`（SSOT 在 DB 表）、顶层 `experimental_bearer_token`
-    /// fallback、`model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与
-    /// 注入产物不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
+    /// 已剥离全部供应商专属与 cc-switch 注入内容：`model` /
+    /// `model_reasoning_effort` / `model_provider` / 顶层 `base_url` /
+    /// 整张 `model_providers` 表（含端点与统一会话桶）、`mcp_servers`
+    /// （SSOT 在 DB 表）、顶层 `experimental_bearer_token` fallback、
+    /// `model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与注入产物
+    /// 不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
     ///
     /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
     /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
@@ -2861,7 +3113,7 @@ impl ProviderService {
     /// `OPENROUTER_API_KEY` / `GOOGLE_API_KEY` 等回退）、各类 `*_AUTH_TOKEN` /
     /// 单数 `*_TOKEN`、AWS Bedrock / Vertex 凭据、以及通用 secret / password /
     /// 私钥命名。
-    fn is_sensitive_config_key(name: &str) -> bool {
+    pub(crate) fn is_sensitive_config_key(name: &str) -> bool {
         let upper = name.to_ascii_uppercase();
 
         // 单数 `_TOKEN` 命中 AWS_SESSION_TOKEN 等，但**不**误伤复数 `_TOKENS`
@@ -2904,30 +3156,26 @@ impl ProviderService {
     fn extract_claude_common_config(settings: &Value) -> Result<String, AppError> {
         let mut config = settings.clone();
 
-        // 供应商专属的**非机密**字段（模型 + 端点），不应共享。凭据/机密不在此列举，
-        // 改由 `is_sensitive_config_key`（模式匹配）统一剥离，新供应商的 `*_API_KEY`
-        // 等无需再手工补名单即可被覆盖。
+        // 供应商专属的非机密字段（模型 + 端点）不共享；凭据/机密不在此列举，
+        // 由 `is_sensitive_config_key` 统一剥离。
         const ENV_PROVIDER_SPECIFIC_EXCLUDES: &[&str] = &[
             "ANTHROPIC_MODEL",
-            "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
+            "ANTHROPIC_REASONING_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
             "CLAUDE_CODE_SUBAGENT_MODEL",
             "ANTHROPIC_BASE_URL",
         ];
 
-        const TOP_LEVEL_EXCLUDES: &[&str] = &[
-            "apiBaseUrl",
-            // Legacy model fields
-            "primaryModel",
-            "smallFastModel",
-        ];
+        const TOP_LEVEL_EXCLUDES: &[&str] = &["apiBaseUrl", "primaryModel", "smallFastModel"];
 
-        // Remove env fields: provider-specific (models/endpoint) + 任何凭据键。
+        // Remove env fields: provider-specific (models/endpoint) + credential-like keys.
         if let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) {
             let sensitive: Vec<String> = env
                 .keys()
@@ -3041,6 +3289,7 @@ impl ProviderService {
         // Remove provider-specific fields.
         let root = doc.as_table_mut();
         root.remove("model");
+        root.remove("model_reasoning_effort");
         root.remove("model_provider");
         // Legacy/alt formats might use a top-level base_url.
         root.remove("base_url");
@@ -3116,16 +3365,15 @@ impl ProviderService {
 
     /// Extract common config for Gemini (JSON format)
     ///
-    /// Extracts `.env` values while excluding provider-specific credentials:
-    /// - GOOGLE_GEMINI_BASE_URL
-    /// - GEMINI_API_KEY
+    /// Extracts shared `.env` values and Gemini settings while excluding
+    /// provider-specific endpoints and credentials.
     fn extract_gemini_common_config(settings: &Value) -> Result<String, AppError> {
         let env = settings.get("env").and_then(|v| v.as_object());
 
-        let mut snippet = serde_json::Map::new();
+        let mut shared_env = serde_json::Map::new();
         if let Some(env) = env {
             for (key, value) in env {
-                if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
+                if key == "GOOGLE_GEMINI_BASE_URL" || Self::is_sensitive_config_key(key) {
                     continue;
                 }
                 let Value::String(v) = value else {
@@ -3133,13 +3381,34 @@ impl ProviderService {
                 };
                 let trimmed = v.trim();
                 if !trimmed.is_empty() {
-                    snippet.insert(key.to_string(), Value::String(trimmed.to_string()));
+                    shared_env.insert(key.to_string(), Value::String(trimmed.to_string()));
                 }
             }
         }
 
-        if snippet.is_empty() {
+        let shared_config = settings
+            .get("config")
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+
+        if shared_env.is_empty()
+            && shared_config
+                .as_object()
+                .is_none_or(serde_json::Map::is_empty)
+        {
             return Ok("{}".to_string());
+        }
+
+        let mut snippet = serde_json::Map::new();
+        if !shared_env.is_empty() {
+            snippet.insert("env".to_string(), Value::Object(shared_env));
+        }
+        if !shared_config
+            .as_object()
+            .is_none_or(serde_json::Map::is_empty)
+        {
+            snippet.insert("config".to_string(), shared_config);
         }
 
         serde_json::to_string_pretty(&Value::Object(snippet))

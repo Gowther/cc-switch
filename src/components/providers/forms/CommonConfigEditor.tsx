@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Save, Download, Loader2, Package } from "lucide-react";
+import { Save, Download, Loader2, Package, CheckCheck } from "lucide-react";
 import JsonEditor from "@/components/JsonEditor";
 
 interface CommonConfigEditorProps {
@@ -19,6 +19,8 @@ interface CommonConfigEditorProps {
   onModalClose: () => void;
   onExtract?: () => void;
   isExtracting?: boolean;
+  onEnableAll?: (value: string) => Promise<boolean>;
+  isEnablingAll?: boolean;
 }
 
 export function CommonConfigEditor({
@@ -34,6 +36,8 @@ export function CommonConfigEditor({
   onModalClose,
   onExtract,
   isExtracting,
+  onEnableAll,
+  isEnablingAll = false,
 }: CommonConfigEditorProps) {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -286,6 +290,28 @@ export function CommonConfigEditor({
                 )}
                 {t("claudeConfig.extractFromCurrent", {
                   defaultValue: "从编辑内容提取",
+                })}
+              </Button>
+            )}
+            {onEnableAll && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  void onEnableAll(commonConfigSnippet).then((enabled) => {
+                    if (enabled) onModalClose();
+                  });
+                }}
+                disabled={isEnablingAll || !commonConfigSnippet.trim()}
+                className="gap-2"
+              >
+                {isEnablingAll ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <CheckCheck className="w-4 h-4" />
+                )}
+                {t("commonConfig.enableAll", {
+                  defaultValue: "为全部供应商启用",
                 })}
               </Button>
             )}
