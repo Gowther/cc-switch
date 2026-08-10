@@ -27,6 +27,11 @@ pub async fn stream_check_provider(
     let provider = providers
         .get(&provider_id)
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+    if !provider.enabled {
+        return Err(AppError::Message(
+            "该供应商已禁用，请先恢复后再检测".to_string(),
+        ));
+    }
 
     // Copilot 端点是动态的（随 OAuth token 解析），需预先取出 host 再探测；
     // 其余供应商传 None，由服务层从 settings_config 提取 base_url。无需鉴权。
@@ -72,6 +77,9 @@ pub async fn stream_check_all_providers(
 
     let mut results = Vec::new();
     for (id, provider) in providers {
+        if !provider.enabled {
+            continue;
+        }
         if let Some(ids) = &allowed_ids {
             if !ids.contains(&id) {
                 continue;
@@ -176,6 +184,7 @@ mod tests {
         let typed_provider = Provider {
             id: "p1".to_string(),
             name: "typed".to_string(),
+            enabled: true,
             settings_config: json!({}),
             website_url: None,
             category: None,
@@ -195,6 +204,7 @@ mod tests {
         let url_provider = Provider {
             id: "p2".to_string(),
             name: "url".to_string(),
+            enabled: true,
             settings_config: json!({
                 "env": {
                     "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
@@ -218,6 +228,7 @@ mod tests {
         let provider = Provider {
             id: "p3".to_string(),
             name: "relay".to_string(),
+            enabled: true,
             settings_config: json!({}),
             website_url: None,
             category: None,

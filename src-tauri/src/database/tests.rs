@@ -483,6 +483,72 @@ fn schema_create_tables_repairs_dev_global_profile_marker() {
 }
 
 #[test]
+fn schema_v12_to_v13_adds_enabled_with_true_default() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE providers (
+            id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            settings_config TEXT NOT NULL,
+            PRIMARY KEY (id, app_type)
+        );
+        INSERT INTO providers (id, app_type, name, settings_config)
+        VALUES ('legacy', 'claude', 'Legacy', '{}');
+        "#,
+    )
+    .expect("seed v12 providers table");
+    Database::set_user_version(&conn, 12).expect("set user_version=12");
+
+    Database::apply_schema_migrations(&conn).expect("migrate v12 to v13");
+
+    let enabled: bool = conn
+        .query_row(
+            "SELECT enabled FROM providers WHERE id = 'legacy' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read migrated enabled state");
+    assert!(enabled);
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn disabled_provider_keeps_failover_membership_for_restore() {
+    let db = Database::memory().expect("in-memory database");
+    let provider = Provider::with_id("queued".to_string(), "Queued".to_string(), json!({}), None);
+    db.save_provider("claude", &provider)
+        .expect("save provider");
+    db.add_to_failover_queue("claude", "queued")
+        .expect("add provider to failover queue");
+
+    db.set_provider_enabled("claude", "queued", false)
+        .expect("disable provider");
+    assert!(db
+        .get_failover_queue("claude")
+        .expect("get effective failover queue")
+        .is_empty());
+    assert!(
+        db.get_provider_by_id("queued", "claude")
+            .expect("read disabled provider")
+            .expect("provider exists")
+            .in_failover_queue
+    );
+
+    db.set_provider_enabled("claude", "queued", true)
+        .expect("restore provider");
+    let queue = db
+        .get_failover_queue("claude")
+        .expect("get restored failover queue");
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].provider_id, "queued");
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
@@ -586,6 +652,7 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         "limit_monthly_usd",
         "provider_type",
         "in_failover_queue",
+        "enabled",
     ] {
         assert!(
             Database::has_column(&conn, "providers", column).expect("check column"),
@@ -699,6 +766,7 @@ fn dry_run_validates_schema_compatibility() {
         Provider {
             id: "test-provider".to_string(),
             name: "Test Provider".to_string(),
+            enabled: true,
             settings_config: json!({
                 "anthropicApiKey": "sk-test-123",
             }),

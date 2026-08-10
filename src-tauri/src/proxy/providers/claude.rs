@@ -958,6 +958,7 @@ mod tests {
         Provider {
             id: "test".to_string(),
             name: "Test Claude".to_string(),
+            enabled: true,
             settings_config: config,
             website_url: None,
             category: Some("claude".to_string()),
@@ -975,6 +976,7 @@ mod tests {
         Provider {
             id: "test".to_string(),
             name: "Test Claude".to_string(),
+            enabled: true,
             settings_config: config,
             website_url: None,
             category: Some("claude".to_string()),

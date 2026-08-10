@@ -66,6 +66,9 @@ impl ProviderRouter {
                 let Some(provider) = all_providers.get(&provider_id).cloned() else {
                     continue;
                 };
+                if !provider.enabled {
+                    continue;
+                }
 
                 let circuit_key = format!("{app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
@@ -89,8 +92,10 @@ impl ProviderRouter {
 
             if let Some(current_id) = current_id {
                 if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
-                    total_providers = 1;
-                    result.push(current);
+                    if current.enabled {
+                        total_providers = 1;
+                        result.push(current);
+                    }
                 }
             }
         }
@@ -393,6 +398,32 @@ mod tests {
         // 故障转移开启时：仅按队列顺序选择（忽略当前供应商）
         assert_eq!(providers[0].id, "b");
         assert_eq!(providers[1].id, "a");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_failover_enabled_skips_disabled_provider() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.add_to_failover_queue("claude", "a").unwrap();
+        db.add_to_failover_queue("claude", "b").unwrap();
+        db.set_provider_enabled("claude", "a", false).unwrap();
+
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db);
+        let providers = router.select_providers("claude").await.unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "b");
     }
 
     #[tokio::test]

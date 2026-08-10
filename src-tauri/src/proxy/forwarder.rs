@@ -3114,6 +3114,7 @@ mod tests {
         Provider {
             id: "provider-1".to_string(),
             name: "Provider 1".to_string(),
+            enabled: true,
             settings_config: json!({}),
             website_url: None,
             category: None,
@@ -3999,6 +4000,7 @@ mod tests {
         let provider = Provider {
             id: "test".to_string(),
             name: "Test Copilot".to_string(),
+            enabled: true,
             settings_config: serde_json::json!({}),
             website_url: None,
             category: None,
@@ -4044,6 +4046,7 @@ mod tests {
         let provider = Provider {
             id: "enterprise".to_string(),
             name: "Enterprise Copilot".to_string(),
+            enabled: true,
             settings_config: serde_json::json!({}),
             website_url: None,
             category: None,

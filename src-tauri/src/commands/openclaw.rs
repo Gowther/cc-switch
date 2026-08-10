@@ -55,8 +55,22 @@ pub fn get_openclaw_default_model() -> Result<Option<openclaw_config::OpenClawDe
 /// Set OpenClaw default model config (agents.defaults.model)
 #[tauri::command]
 pub fn set_openclaw_default_model(
+    state: State<'_, AppState>,
     model: openclaw_config::OpenClawDefaultModel,
 ) -> Result<openclaw_config::OpenClawWriteOutcome, String> {
+    for model_id in
+        std::iter::once(model.primary.as_str()).chain(model.fallbacks.iter().map(String::as_str))
+    {
+        let provider_id = model_id.split_once('/').map_or(model_id, |(id, _)| id);
+        if state
+            .db
+            .get_provider_by_id(provider_id, "openclaw")
+            .map_err(|e| e.to_string())?
+            .is_some_and(|provider| !provider.enabled)
+        {
+            return Err(format!("供应商 {provider_id} 已禁用，无法设为默认模型"));
+        }
+    }
     openclaw_config::set_default_model(&model).map_err(|e| e.to_string())
 }
 

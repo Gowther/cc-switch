@@ -276,6 +276,7 @@ impl OmoService {
         let provider = crate::provider::Provider {
             id: provider_id,
             name,
+            enabled: true,
             settings_config,
             website_url: None,
             category: Some(v.category.to_string()),

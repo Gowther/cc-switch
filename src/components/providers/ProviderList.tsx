@@ -13,7 +13,7 @@ import {
   type CSSProperties,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Search, X } from "lucide-react";
+import { AlertTriangle, Eye, EyeOff, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -190,6 +190,7 @@ export function ProviderList({
 
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [showDisabled, setShowDisabled] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
@@ -244,6 +245,33 @@ export function ProviderList({
     },
   });
 
+  const setEnabledMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      providersApi.setEnabled(id, appId, enabled),
+    onSuccess: async (_, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["providers", appId] }),
+        queryClient.invalidateQueries({ queryKey: ["failoverQueue", appId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["availableProvidersForFailover", appId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["opencodeLiveProviderIds"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["openclaw"] }),
+        queryClient.invalidateQueries({ queryKey: ["hermes"] }),
+      ]);
+      toast.success(
+        variables.enabled
+          ? t("provider.restored", { defaultValue: "Provider restored" })
+          : t("provider.disabled", { defaultValue: "Provider disabled" }),
+      );
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
@@ -279,14 +307,21 @@ export function ProviderList({
 
   const filteredProviders = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
-    if (!keyword) return sortedProviders;
     return sortedProviders.filter((provider) => {
+      if (!showDisabled && provider.enabled === false) return false;
+      if (!keyword) return true;
       const fields = [provider.name, provider.notes, provider.websiteUrl];
       return fields.some((field) =>
         field?.toString().toLowerCase().includes(keyword),
       );
     });
-  }, [searchTerm, sortedProviders]);
+  }, [searchTerm, showDisabled, sortedProviders]);
+
+  const disabledCount = useMemo(
+    () =>
+      sortedProviders.filter((provider) => provider.enabled === false).length,
+    [sortedProviders],
+  );
 
   const claudeDesktopStatusMessages = useMemo(() => {
     if (appId !== "claude-desktop" || !claudeDesktopStatus) return [];
@@ -434,6 +469,9 @@ export function ProviderList({
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
                 }
+                onSetEnabled={(enabled) =>
+                  setEnabledMutation.mutate({ id: provider.id, enabled })
+                }
               />
             );
           })}
@@ -523,11 +561,42 @@ export function ProviderList({
         )}
       </AnimatePresence>
 
+      {disabledCount > 0 && (
+        <div className="flex justify-end">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowDisabled((visible) => !visible)}
+            aria-pressed={showDisabled}
+            title={t("provider.toggleDisabled", {
+              defaultValue: "Show or hide disabled providers",
+            })}
+            className="text-muted-foreground"
+          >
+            {showDisabled ? (
+              <EyeOff className="h-4 w-4" />
+            ) : (
+              <Eye className="h-4 w-4" />
+            )}
+            {showDisabled
+              ? t("provider.hideDisabled", { defaultValue: "Hide disabled" })
+              : t("provider.showDisabled", {
+                  count: disabledCount,
+                  defaultValue: "Disabled ({{count}})",
+                })}
+          </Button>
+        </div>
+      )}
+
       {filteredProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
-          {t("provider.noSearchResults", {
-            defaultValue: "No providers match your search.",
-          })}
+          {searchTerm.trim()
+            ? t("provider.noSearchResults", {
+                defaultValue: "No providers match your search.",
+              })
+            : t("provider.allDisabled", {
+                defaultValue: "All providers are disabled.",
+              })}
         </div>
       ) : (
         renderProviderList()
@@ -565,6 +634,7 @@ interface SortableProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  onSetEnabled: (enabled: boolean) => void;
 }
 
 function SortableProviderCard({
@@ -595,6 +665,7 @@ function SortableProviderCard({
   activeProviderId,
   isDefaultModel,
   onSetAsDefault,
+  onSetEnabled,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -648,6 +719,7 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
+        onSetEnabled={onSetEnabled}
       />
     </div>
   );

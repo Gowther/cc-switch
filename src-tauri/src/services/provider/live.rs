@@ -1024,6 +1024,9 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
     let mut synced_count = 0usize;
 
     for provider in providers.values() {
+        if !provider.enabled {
+            continue;
+        }
         if provider
             .meta
             .as_ref()

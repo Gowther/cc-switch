@@ -2600,6 +2600,9 @@ pub async fn open_provider_terminal(
     let provider = providers
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
+    if !provider.enabled {
+        return Err("该供应商已禁用，请先恢复后再打开终端".to_string());
+    }
 
     // 从提供商配置中提取环境变量
     let config = &provider.settings_config;

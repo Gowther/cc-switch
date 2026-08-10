@@ -397,6 +397,7 @@ mod tests {
         Provider {
             id: "test".to_string(),
             name: "Test".to_string(),
+            enabled: true,
             settings_config,
             website_url: None,
             category: None,

@@ -11,6 +11,9 @@ use std::collections::HashMap;
 pub struct Provider {
     pub id: String,
     pub name: String,
+    /// Whether this provider is available for switching and runtime routing.
+    #[serde(default = "default_provider_enabled")]
+    pub enabled: bool,
     #[serde(rename = "settingsConfig")]
     pub settings_config: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,6 +57,7 @@ impl Provider {
         Self {
             id,
             name,
+            enabled: true,
             settings_config,
             website_url,
             category: None,
@@ -206,6 +210,10 @@ impl Provider {
         // and `{{baseUrl}}/path` concatenation never produces a double slash.
         (base_url.trim_end_matches('/').to_string(), api_key)
     }
+}
+
+fn default_provider_enabled() -> bool {
+    true
 }
 
 /// 供应商管理器
@@ -767,6 +775,7 @@ impl UniversalProvider {
         Some(Provider {
             id: format!("universal-claude-{}", self.id),
             name: self.name.clone(),
+            enabled: true,
             settings_config,
             website_url: self.website_url.clone(),
             category: Some("aggregator".to_string()),
@@ -832,6 +841,7 @@ requires_openai_auth = true"#
         Some(Provider {
             id: format!("universal-codex-{}", self.id),
             name: self.name.clone(),
+            enabled: true,
             settings_config,
             website_url: self.website_url.clone(),
             category: Some("aggregator".to_string()),
@@ -867,6 +877,7 @@ requires_openai_auth = true"#
         Some(Provider {
             id: format!("universal-gemini-{}", self.id),
             name: self.name.clone(),
+            enabled: true,
             settings_config,
             website_url: self.website_url.clone(),
             category: Some("aggregator".to_string()),
@@ -1078,6 +1089,7 @@ mod tests {
 
         assert_eq!(provider.id, "provider-1");
         assert_eq!(provider.name, "Provider");
+        assert!(provider.enabled);
         assert_eq!(provider.settings_config, settings_config);
         assert_eq!(provider.website_url.as_deref(), Some("https://example.com"));
         assert!(provider.category.is_none());
@@ -1088,6 +1100,18 @@ mod tests {
         assert!(provider.icon.is_none());
         assert!(provider.icon_color.is_none());
         assert!(!provider.in_failover_queue);
+    }
+
+    #[test]
+    fn provider_deserialization_defaults_legacy_entries_to_enabled() {
+        let provider: Provider = serde_json::from_value(json!({
+            "id": "legacy",
+            "name": "Legacy",
+            "settingsConfig": {}
+        }))
+        .expect("deserialize legacy provider");
+
+        assert!(provider.enabled);
     }
 
     #[test]

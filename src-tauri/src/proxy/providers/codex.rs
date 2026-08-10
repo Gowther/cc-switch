@@ -693,6 +693,7 @@ mod tests {
         Provider {
             id: "test".to_string(),
             name: "Test Codex".to_string(),
+            enabled: true,
             settings_config: config,
             website_url: None,
             category: Some("codex".to_string()),

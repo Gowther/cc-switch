@@ -82,6 +82,21 @@ pub fn remove_provider_from_live_config(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn set_provider_enabled(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+    app: String,
+    id: String,
+    enabled: bool,
+) -> Result<bool, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ProviderService::set_enabled(state.inner(), app_type, &id, enabled)
+        .map_err(|e| e.to_string())?;
+    crate::tray::refresh_tray_menu(&app_handle);
+    Ok(true)
+}
+
 fn switch_provider_internal(
     state: &AppState,
     app_type: AppType,
@@ -464,6 +479,9 @@ async fn query_provider_usage_inner(
         .get_all_providers(app_type.as_str())
         .map_err(|e| format!("Failed to get providers: {e}"))?;
     let provider = providers.get(provider_id);
+    if provider.is_some_and(|provider| !provider.enabled) {
+        return Err("该供应商已禁用，请先恢复后再查询用量".to_string());
+    }
     let usage_script = provider
         .and_then(|p| p.meta.as_ref())
         .and_then(|m| m.usage_script.as_ref());

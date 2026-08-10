@@ -8,6 +8,8 @@ import {
   Minus,
   Play,
   Plus,
+  Power,
+  PowerOff,
   Terminal,
   Trash2,
   Zap,
@@ -42,6 +44,8 @@ interface ProviderActionsProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  isEnabled?: boolean;
+  onSetEnabled?: (enabled: boolean) => void;
 }
 
 // 主按钮的呈现状态。title 用于 disabled 态向用户解释为何不可点击；
@@ -80,6 +84,8 @@ export function ProviderActions({
   // OpenClaw: default model
   isDefaultModel = false,
   onSetAsDefault,
+  isEnabled = true,
+  onSetEnabled,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
@@ -120,6 +126,16 @@ export function ProviderActions({
   };
 
   const getMainButtonState = (): MainButtonState => {
+    if (!isEnabled) {
+      return {
+        disabled: true,
+        variant: "secondary" as const,
+        className: "opacity-60 cursor-not-allowed",
+        icon: <PowerOff className="h-4 w-4" />,
+        text: t("provider.disabled", { defaultValue: "Disabled" }),
+      };
+    }
+
     if (isOmo) {
       if (isCurrent) {
         return {
@@ -222,13 +238,18 @@ export function ProviderActions({
 
   const canDelete =
     !isReadOnly && (isOmo || isAdditiveMode ? true : !isCurrent);
+  const canChangeEnabled =
+    Boolean(onSetEnabled) &&
+    !isReadOnly &&
+    (!isEnabled || (!isCurrent && !isDefaultModel));
   const readOnlyHint = t("provider.managedByHermesHint", {
     defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
   });
 
   return (
     <div className="flex items-center gap-1.5">
-      {(appId === "openclaw" || appId === "hermes") &&
+      {isEnabled &&
+        (appId === "openclaw" || appId === "hermes") &&
         isInConfig &&
         onSetAsDefault &&
         (() => {
@@ -309,11 +330,12 @@ export function ProviderActions({
           size="icon"
           variant="ghost"
           onClick={onTest || undefined}
-          disabled={isTesting}
+          disabled={!isEnabled || isTesting || !onTest}
           title={t("provider.connectivityCheck", "检测连通")}
           className={cn(
             iconButtonClass,
-            !onTest && "opacity-40 cursor-not-allowed text-muted-foreground",
+            (!isEnabled || !onTest) &&
+              "opacity-40 cursor-not-allowed text-muted-foreground",
           )}
         >
           {isTesting ? (
@@ -341,16 +363,51 @@ export function ProviderActions({
           <Button
             size="icon"
             variant="ghost"
-            onClick={onOpenTerminal}
+            onClick={isEnabled ? onOpenTerminal : undefined}
+            disabled={!isEnabled}
             title={t("provider.openTerminal", "打开终端")}
             className={cn(
               iconButtonClass,
-              "hover:text-emerald-600 dark:hover:text-emerald-400",
+              isEnabled
+                ? "hover:text-emerald-600 dark:hover:text-emerald-400"
+                : "opacity-40 cursor-not-allowed text-muted-foreground",
             )}
           >
             <Terminal className="h-4 w-4" />
           </Button>
         )}
+
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={
+            canChangeEnabled && onSetEnabled
+              ? () => onSetEnabled(!isEnabled)
+              : undefined
+          }
+          disabled={!canChangeEnabled}
+          title={
+            canChangeEnabled
+              ? isEnabled
+                ? t("provider.disable", { defaultValue: "Disable" })
+                : t("provider.restore", { defaultValue: "Restore" })
+              : t("provider.disableCurrentHint", {
+                  defaultValue: "Switch away before disabling this provider",
+                })
+          }
+          className={cn(
+            iconButtonClass,
+            canChangeEnabled
+              ? "hover:text-amber-600 dark:hover:text-amber-400"
+              : "opacity-40 cursor-not-allowed text-muted-foreground",
+          )}
+        >
+          {isEnabled ? (
+            <PowerOff className="h-4 w-4" />
+          ) : (
+            <Power className="h-4 w-4" />
+          )}
+        </Button>
 
         <Button
           size="icon"

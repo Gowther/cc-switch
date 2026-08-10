@@ -616,7 +616,8 @@ pub fn create_tray_menu(
         }
 
         let app_type_str = section.app_type.as_str();
-        let providers = app_state.db.get_all_providers(app_type_str)?;
+        let mut providers = app_state.db.get_all_providers(app_type_str)?;
+        providers.retain(|_, provider| provider.enabled);
 
         let current_id =
             crate::settings::get_effective_current_provider(&app_state.db, &section.app_type)?
@@ -824,7 +825,10 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
         else {
             continue;
         };
-        let Some(provider) = providers.get(&current_id) else {
+        let Some(provider) = providers
+            .get(&current_id)
+            .filter(|provider| provider.enabled)
+        else {
             continue;
         };
         let suffix = format_usage_suffix(&app_state, &section.app_type, provider, &current_id)
@@ -1014,6 +1018,9 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                 continue;
             }
         };
+        if !current.enabled {
+            continue;
+        }
 
         // 与 format_usage_suffix 同一优先级：只有显式启用的用量查询才发请求。
         let is_official_provider = current.category.as_deref() == Some("official");

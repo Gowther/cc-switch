@@ -64,6 +64,7 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  onSetEnabled: (enabled: boolean) => void;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -163,6 +164,7 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  onSetEnabled,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -170,6 +172,7 @@ export function ProviderCard({
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
   const isAdditiveMode = appId === "opencode" && !isAnyOmo;
+  const isProviderEnabled = provider.enabled !== false;
 
   const { data: health } = useProviderHealth(provider.id, appId);
 
@@ -244,12 +247,17 @@ export function ProviderCard({
     appId === "opencode" || appId === "openclaw" || appId === "hermes"
       ? isInConfig
       : isCurrent;
-  const autoQueryInterval = shouldAutoQuery
-    ? provider.meta?.usage_script?.autoQueryInterval || 0
-    : 0;
+  const autoQueryInterval =
+    shouldAutoQuery && isProviderEnabled
+      ? provider.meta?.usage_script?.autoQueryInterval || 0
+      : 0;
 
   const { data: usage } = useUsageQuery(provider.id, appId, {
-    enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
+    enabled:
+      isProviderEnabled &&
+      usageEnabled &&
+      !isOfficial &&
+      !isOfficialSubscriptionUsage,
     autoQueryInterval,
   });
 
@@ -279,15 +287,17 @@ export function ProviderCard({
   // - OpenCode（非 OMO）：不存在"当前"概念，返回 false
   // - 故障转移模式：代理实际使用的供应商（activeProviderId）
   // - 普通模式：isCurrent
-  const isActiveProvider = isAnyOmo
-    ? isCurrent
-    : appId === "openclaw"
-      ? Boolean(isDefaultModel)
-      : appId === "opencode"
-        ? false
-        : isAutoFailoverEnabled
-          ? activeProviderId === provider.id
-          : isCurrent;
+  const isActiveProvider =
+    isProviderEnabled &&
+    (isAnyOmo
+      ? isCurrent
+      : appId === "openclaw"
+        ? Boolean(isDefaultModel)
+        : appId === "opencode"
+          ? false
+          : isAutoFailoverEnabled
+            ? activeProviderId === provider.id
+            : isCurrent);
 
   const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
   const hasPersistentConfigHighlight = isAdditiveMode && isInConfig;
@@ -312,6 +322,7 @@ export function ProviderCard({
           "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+        !isProviderEnabled && "opacity-70",
       )}
     >
       <div
@@ -450,6 +461,12 @@ export function ProviderCard({
                   })}
                 </span>
               )}
+
+              {!isProviderEnabled && (
+                <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                  {t("provider.disabled", { defaultValue: "Disabled" })}
+                </span>
+              )}
             </div>
 
             {displayUrl && (
@@ -474,7 +491,7 @@ export function ProviderCard({
         <div className="flex items-center ml-auto min-w-0 gap-3">
           <div className="ml-auto">
             <div className="flex items-center gap-1">
-              {isCopilot ? (
+              {!isProviderEnabled ? null : isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
                   inline={true}
@@ -586,6 +603,8 @@ export function ProviderCard({
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
               onSetAsDefault={onSetAsDefault}
+              isEnabled={isProviderEnabled}
+              onSetEnabled={onSetEnabled}
             />
           </div>
         </div>

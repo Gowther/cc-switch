@@ -307,6 +307,7 @@ mod tests {
         Provider {
             id: id.to_string(),
             name: format!("Provider {id}"),
+            enabled: true,
             settings_config: json!({
                 "baseUrl": "https://api.deepseek.com",
                 "apiKey": "test-key",
@@ -329,6 +330,7 @@ mod tests {
         Provider {
             id: id.to_string(),
             name: format!("Provider {id}"),
+            enabled: true,
             settings_config: json!({
                 "api": "openai-chat",
                 "base_url": "https://api.example.com/v1",
@@ -355,6 +357,7 @@ mod tests {
         Provider {
             id: id.to_string(),
             name: format!("Provider {id}"),
+            enabled: true,
             settings_config: json!({
                 "npm": "@ai-sdk/openai-compatible",
                 "name": format!("Provider {id}"),
@@ -408,6 +411,7 @@ mod tests {
         Provider {
             id: id.to_string(),
             name: format!("Provider {id}"),
+            enabled: true,
             settings_config: Value::Object(settings),
             website_url: None,
             category: Some(category.to_string()),
@@ -427,6 +431,42 @@ mod tests {
             "omo-slim" => crate::services::omo::SLIM.preferred_filename,
             other => panic!("unexpected OMO category in test: {other}"),
         })
+    }
+
+    #[test]
+    #[serial]
+    fn update_disabled_additive_provider_preserves_live_restore_state() {
+        with_test_home(|state, _| {
+            let mut provider = opencode_provider("disabled-opencode");
+            provider.enabled = false;
+            provider.meta = Some(ProviderMeta {
+                live_config_managed: Some(true),
+                ..Default::default()
+            });
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("save disabled provider");
+
+            let mut updated = provider.clone();
+            updated.name = "Updated while disabled".to_string();
+            ProviderService::update(state, AppType::OpenCode, None, updated)
+                .expect("update disabled provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("disabled-opencode", AppType::OpenCode.as_str())
+                .expect("query updated provider")
+                .expect("updated provider exists");
+            assert!(!saved.enabled);
+            assert_eq!(
+                saved
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.live_config_managed),
+                Some(true)
+            );
+        });
     }
 
     #[test]
@@ -2028,6 +2068,16 @@ impl ProviderService {
             .live_config_managed = Some(managed);
     }
 
+    fn preserve_provider_live_config_managed(provider: &mut Provider, existing: &Provider) {
+        let managed = Self::provider_live_config_managed(existing);
+        if managed.is_some() || provider.meta.is_some() {
+            provider
+                .meta
+                .get_or_insert_with(Default::default)
+                .live_config_managed = managed;
+        }
+    }
+
     fn normalize_usage_script_credential_overrides(app_type: &AppType, provider: &mut Provider) {
         let current_credentials = provider.resolve_usage_credentials(app_type);
 
@@ -2181,6 +2231,9 @@ impl ProviderService {
         let existing_provider = state
             .db
             .get_provider_by_id(&original_id, app_type.as_str())?;
+        if let Some(existing) = &existing_provider {
+            provider.enabled = existing.enabled;
+        }
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
@@ -2247,7 +2300,11 @@ impl ProviderService {
                 )));
             }
 
-            Self::set_provider_live_config_managed(&mut provider, false);
+            if existing_provider.enabled {
+                Self::set_provider_live_config_managed(&mut provider, false);
+            } else {
+                Self::preserve_provider_live_config_managed(&mut provider, &existing_provider);
+            }
             state.db.save_provider(app_type.as_str(), &provider)?;
             state.db.delete_provider(app_type.as_str(), &original_id)?;
 
@@ -2293,6 +2350,14 @@ impl ProviderService {
                     }
                     return Err(err);
                 }
+                return Ok(true);
+            }
+            if let Some(existing) = existing_provider
+                .as_ref()
+                .filter(|provider| !provider.enabled)
+            {
+                Self::preserve_provider_live_config_managed(&mut provider, existing);
+                state.db.save_provider(app_type.as_str(), &provider)?;
                 return Ok(true);
             }
             let live_config_managed = Self::check_live_config_exists(
@@ -2509,6 +2574,145 @@ impl ProviderService {
         Ok(())
     }
 
+    /// Soft-disable or re-enable a provider without deleting its stored configuration.
+    ///
+    /// Disabled providers remain in the database (including their failover queue position),
+    /// but are excluded from switching, routing, tray menus, and additive live configs.
+    pub fn set_enabled(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let provider = state
+            .db
+            .get_provider_by_id(id, app_type.as_str())?
+            .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        if provider.enabled == enabled {
+            return Ok(());
+        }
+
+        let omo_variant = if matches!(app_type, AppType::OpenCode) {
+            match provider.category.as_deref() {
+                Some("omo") => Some(&crate::services::omo::STANDARD),
+                Some("omo-slim") => Some(&crate::services::omo::SLIM),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        if !enabled {
+            if !app_type.is_additive_mode() {
+                let effective_current =
+                    crate::settings::get_effective_current_provider(&state.db, &app_type)?;
+                let db_current = state.db.get_current_provider(app_type.as_str())?;
+                if effective_current.as_deref() == Some(id) || db_current.as_deref() == Some(id) {
+                    return Err(AppError::localized(
+                        "provider.disable_current",
+                        "无法禁用当前正在使用的供应商，请先切换到其他供应商。",
+                        "Cannot disable the provider currently in use. Switch to another provider first.",
+                    ));
+                }
+            }
+
+            if let Some(variant) = omo_variant {
+                if state
+                    .db
+                    .is_omo_provider_current(app_type.as_str(), id, variant.category)?
+                {
+                    return Err(AppError::localized(
+                        "provider.disable_current",
+                        "无法禁用当前正在使用的供应商，请先切换到其他供应商。",
+                        "Cannot disable the provider currently in use. Switch to another provider first.",
+                    ));
+                }
+            }
+
+            if matches!(app_type, AppType::OpenClaw) {
+                let referenced_by_default = crate::openclaw_config::get_default_model()?
+                    .is_some_and(|model| {
+                        std::iter::once(model.primary.as_str())
+                            .chain(model.fallbacks.iter().map(String::as_str))
+                            .any(|model_id| {
+                                model_id == id
+                                    || model_id
+                                        .strip_prefix(id)
+                                        .is_some_and(|suffix| suffix.starts_with('/'))
+                            })
+                    });
+                if referenced_by_default {
+                    return Err(AppError::localized(
+                        "provider.disable_default",
+                        "无法禁用默认模型仍在引用的供应商，请先更改默认模型。",
+                        "Cannot disable a provider referenced by the default model. Change the default model first.",
+                    ));
+                }
+            }
+
+            if matches!(app_type, AppType::Hermes)
+                && crate::hermes_config::get_model_config()?
+                    .and_then(|config| config.provider)
+                    .as_deref()
+                    == Some(id)
+            {
+                return Err(AppError::localized(
+                    "provider.disable_current",
+                    "无法禁用当前正在使用的供应商，请先切换到其他供应商。",
+                    "Cannot disable the provider currently in use. Switch to another provider first.",
+                ));
+            }
+        }
+
+        let restore_to_live = app_type.is_additive_mode()
+            && omo_variant.is_none()
+            && Self::provider_live_config_managed(&provider) != Some(false);
+
+        if !enabled && restore_to_live {
+            if Self::check_live_config_exists(
+                &app_type,
+                id,
+                Self::provider_live_config_managed(&provider),
+            )? {
+                match app_type {
+                    AppType::OpenCode => remove_opencode_provider_from_live(id)?,
+                    AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
+                    AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    _ => {}
+                }
+            }
+        } else if enabled && restore_to_live {
+            write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+        }
+
+        if let Err(error) = state
+            .db
+            .set_provider_enabled(app_type.as_str(), id, enabled)
+        {
+            if restore_to_live {
+                let rollback = if enabled {
+                    match app_type {
+                        AppType::OpenCode => remove_opencode_provider_from_live(id),
+                        AppType::OpenClaw => remove_openclaw_provider_from_live(id),
+                        AppType::Hermes => remove_hermes_provider_from_live(id),
+                        _ => Ok(()),
+                    }
+                } else {
+                    write_live_with_common_config(state.db.as_ref(), &app_type, &provider)
+                };
+                if let Err(rollback_error) = rollback {
+                    log::warn!(
+                        "Failed to roll back live config after provider enabled-state error: {rollback_error}"
+                    );
+                }
+            }
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
     /// Switch to a provider
     ///
     /// Switch flow:
@@ -2527,6 +2731,13 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        if !_provider.enabled {
+            return Err(AppError::localized(
+                "provider.disabled",
+                "该供应商已禁用，请先恢复后再使用。",
+                "This provider is disabled. Re-enable it before use.",
+            ));
+        }
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {

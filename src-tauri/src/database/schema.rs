@@ -28,6 +28,7 @@ impl Database {
                 id TEXT NOT NULL,
                 app_type TEXT NOT NULL,
                 name TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT 1,
                 settings_config TEXT NOT NULL,
                 website_url TEXT,
                 category TEXT,
@@ -377,6 +378,7 @@ impl Database {
             "in_failover_queue",
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
+        Self::add_column_if_missing(conn, "providers", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
 
         // 删除旧的 failover_queue 表（如果存在）
         let _ = conn.execute("DROP INDEX IF EXISTS idx_failover_queue_order", []);
@@ -477,6 +479,11 @@ impl Database {
                         log::info!("迁移数据库从 v11 到 v12（添加项目 Profiles 表）");
                         Self::migrate_v11_to_v12(conn)?;
                         Self::set_user_version(conn, 12)?;
+                    }
+                    12 => {
+                        log::info!("迁移数据库从 v12 到 v13（添加供应商启用状态）");
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1319,6 +1326,12 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v12 -> v13 迁移：供应商支持软禁用，历史数据默认保持启用。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(conn, "providers", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
         Ok(())
     }
 

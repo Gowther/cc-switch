@@ -1193,6 +1193,7 @@ pub fn run() {
             commands::update_provider,
             commands::delete_provider,
             commands::remove_provider_from_live_config,
+            commands::set_provider_enabled,
             commands::switch_provider,
             commands::import_default_config,
             commands::get_claude_desktop_status,

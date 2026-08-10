@@ -27,7 +27,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, sort_index, notes
                  FROM providers
-                 WHERE app_type = ?1 AND in_failover_queue = 1
+                 WHERE app_type = ?1 AND in_failover_queue = 1 AND enabled = 1
                  ORDER BY COALESCE(sort_index, 999999), id ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -54,7 +54,7 @@ impl Database {
 
         let result: Vec<Provider> = all_providers
             .into_values()
-            .filter(|p| p.in_failover_queue)
+            .filter(|p| p.enabled && p.in_failover_queue)
             .collect();
 
         Ok(result)
@@ -64,11 +64,17 @@ impl Database {
     pub fn add_to_failover_queue(&self, app_type: &str, provider_id: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
-        conn.execute(
-            "UPDATE providers SET in_failover_queue = 1 WHERE id = ?1 AND app_type = ?2",
-            rusqlite::params![provider_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        let changed = conn
+            .execute(
+                "UPDATE providers SET in_failover_queue = 1 WHERE id = ?1 AND app_type = ?2 AND enabled = 1",
+                rusqlite::params![provider_id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if changed == 0 {
+            return Err(AppError::Message(format!(
+                "供应商 {provider_id} 不存在或已禁用"
+            )));
+        }
 
         Ok(())
     }
@@ -141,7 +147,7 @@ impl Database {
 
         let available: Vec<Provider> = all_providers
             .into_values()
-            .filter(|p| !p.in_failover_queue)
+            .filter(|p| p.enabled && !p.in_failover_queue)
             .collect();
 
         Ok(available)

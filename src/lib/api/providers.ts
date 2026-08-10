@@ -79,6 +79,14 @@ export const providersApi = {
     return await invoke("delete_provider", { id, app: appId });
   },
 
+  async setEnabled(
+    id: string,
+    appId: AppId,
+    enabled: boolean,
+  ): Promise<boolean> {
+    return await invoke("set_provider_enabled", { id, app: appId, enabled });
+  },
+
   /**
    * Remove provider from live config only (for additive mode apps like OpenCode)
    * Does NOT delete from database - provider remains in the list

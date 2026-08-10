@@ -2137,6 +2137,10 @@ impl ProxyService {
             .map_err(|e| format!("读取供应商失败: {e}"))?
             .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
 
+        if !provider.enabled {
+            return Err("该供应商已禁用，请先恢复后再使用".to_string());
+        }
+
         // Defense-in-depth: block official providers during proxy takeover
         if provider.category.as_deref() == Some("official") {
             return Err(

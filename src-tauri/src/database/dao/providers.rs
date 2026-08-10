@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 type OmoProviderRow = (
     String,
     String,
+    bool,
     String,
     Option<String>,
     Option<i64>,
@@ -23,7 +24,7 @@ impl Database {
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+            "SELECT id, name, enabled, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
              FROM providers WHERE app_type = ?1
              ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
@@ -32,16 +33,17 @@ impl Database {
             .query_map(params![app_type], |row| {
                 let id: String = row.get(0)?;
                 let name: String = row.get(1)?;
-                let settings_config_str: String = row.get(2)?;
-                let website_url: Option<String> = row.get(3)?;
-                let category: Option<String> = row.get(4)?;
-                let created_at: Option<i64> = row.get(5)?;
-                let sort_index: Option<usize> = row.get(6)?;
-                let notes: Option<String> = row.get(7)?;
-                let icon: Option<String> = row.get(8)?;
-                let icon_color: Option<String> = row.get(9)?;
-                let meta_str: String = row.get(10)?;
-                let in_failover_queue: bool = row.get(11)?;
+                let enabled: bool = row.get(2)?;
+                let settings_config_str: String = row.get(3)?;
+                let website_url: Option<String> = row.get(4)?;
+                let category: Option<String> = row.get(5)?;
+                let created_at: Option<i64> = row.get(6)?;
+                let sort_index: Option<usize> = row.get(7)?;
+                let notes: Option<String> = row.get(8)?;
+                let icon: Option<String> = row.get(9)?;
+                let icon_color: Option<String> = row.get(10)?;
+                let meta_str: String = row.get(11)?;
+                let in_failover_queue: bool = row.get(12)?;
 
                 let settings_config =
                     serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
@@ -52,6 +54,7 @@ impl Database {
                     Provider {
                         id: "".to_string(), // Placeholder, set below
                         name,
+                        enabled,
                         settings_config,
                         website_url,
                         category,
@@ -134,21 +137,22 @@ impl Database {
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn.query_row(
-            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+            "SELECT name, enabled, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
              FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],
             |row| {
                 let name: String = row.get(0)?;
-                let settings_config_str: String = row.get(1)?;
-                let website_url: Option<String> = row.get(2)?;
-                let category: Option<String> = row.get(3)?;
-                let created_at: Option<i64> = row.get(4)?;
-                let sort_index: Option<usize> = row.get(5)?;
-                let notes: Option<String> = row.get(6)?;
-                let icon: Option<String> = row.get(7)?;
-                let icon_color: Option<String> = row.get(8)?;
-                let meta_str: String = row.get(9)?;
-                let in_failover_queue: bool = row.get(10)?;
+                let enabled: bool = row.get(1)?;
+                let settings_config_str: String = row.get(2)?;
+                let website_url: Option<String> = row.get(3)?;
+                let category: Option<String> = row.get(4)?;
+                let created_at: Option<i64> = row.get(5)?;
+                let sort_index: Option<usize> = row.get(6)?;
+                let notes: Option<String> = row.get(7)?;
+                let icon: Option<String> = row.get(8)?;
+                let icon_color: Option<String> = row.get(9)?;
+                let meta_str: String = row.get(10)?;
+                let in_failover_queue: bool = row.get(11)?;
 
                 let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
                 let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
@@ -156,6 +160,7 @@ impl Database {
                 Ok(Provider {
                     id: id.to_string(),
                     name,
+                    enabled,
                     settings_config,
                     website_url,
                     category,
@@ -186,17 +191,17 @@ impl Database {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
-        let existing: Option<(bool, bool)> = tx
+        let existing: Option<(bool, bool, bool)> = tx
             .query_row(
-                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+                "SELECT is_current, in_failover_queue, enabled FROM providers WHERE id = ?1 AND app_type = ?2",
                 params![provider.id, app_type],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .ok();
 
         let is_update = existing.is_some();
-        let (is_current, in_failover_queue) =
-            existing.unwrap_or((false, provider.in_failover_queue));
+        let (is_current, in_failover_queue, enabled) =
+            existing.unwrap_or((false, provider.in_failover_queue, provider.enabled));
 
         if is_update {
             tx.execute(
@@ -212,8 +217,9 @@ impl Database {
                     icon_color = ?9,
                     meta = ?10,
                     is_current = ?11,
-                    in_failover_queue = ?12
-                WHERE id = ?13 AND app_type = ?14",
+                    in_failover_queue = ?12,
+                    enabled = ?13
+                WHERE id = ?14 AND app_type = ?15",
                 params![
                     provider.name,
                     serde_json::to_string(&provider.settings_config).map_err(|e| {
@@ -231,6 +237,7 @@ impl Database {
                     )))?,
                     is_current,
                     in_failover_queue,
+                    enabled,
                     provider.id,
                     app_type,
                 ],
@@ -240,8 +247,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO providers (
                     id, app_type, name, settings_config, website_url, category,
-                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue, enabled
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     provider.id,
                     app_type,
@@ -259,6 +266,7 @@ impl Database {
                         .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?,
                     is_current,
                     in_failover_queue,
+                    enabled,
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -284,6 +292,25 @@ impl Database {
             params![id, app_type],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn set_provider_enabled(
+        &self,
+        app_type: &str,
+        id: &str,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let changed = conn
+            .execute(
+                "UPDATE providers SET enabled = ?1 WHERE id = ?2 AND app_type = ?3",
+                params![enabled, id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if changed == 0 {
+            return Err(AppError::Message(format!("供应商 {id} 不存在")));
+        }
         Ok(())
     }
 
@@ -445,7 +472,7 @@ impl Database {
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let row_data: Result<OmoProviderRow, rusqlite::Error> = conn.query_row(
-            "SELECT id, name, settings_config, category, created_at, sort_index, notes, meta
+            "SELECT id, name, enabled, settings_config, category, created_at, sort_index, notes, meta
              FROM providers
              WHERE app_type = ?1 AND category = ?2 AND is_current = 1
              LIMIT 1",
@@ -460,16 +487,26 @@ impl Database {
                     row.get(5)?,
                     row.get(6)?,
                     row.get(7)?,
+                    row.get(8)?,
                 ))
             },
         );
 
-        let (id, name, settings_config_str, _row_category, created_at, sort_index, notes, meta_str) =
-            match row_data {
-                Ok(v) => v,
-                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-                Err(e) => return Err(AppError::Database(e.to_string())),
-            };
+        let (
+            id,
+            name,
+            enabled,
+            settings_config_str,
+            _row_category,
+            created_at,
+            sort_index,
+            notes,
+            meta_str,
+        ) = match row_data {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(AppError::Database(e.to_string())),
+        };
 
         let settings_config = serde_json::from_str(&settings_config_str).map_err(|e| {
             AppError::Database(format!(
@@ -489,6 +526,7 @@ impl Database {
         Ok(Some(Provider {
             id,
             name,
+            enabled,
             settings_config,
             website_url: None,
             category: Some(category.to_string()),
