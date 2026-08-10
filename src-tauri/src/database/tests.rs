@@ -353,6 +353,13 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
     // 以及 v10 形状的明细表（无 pricing_model 列）
     conn.execute_batch(
         r#"
+        CREATE TABLE providers (
+            id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            settings_config TEXT NOT NULL,
+            PRIMARY KEY (id, app_type)
+        );
         CREATE TABLE proxy_request_logs (
             request_id TEXT PRIMARY KEY,
             model TEXT NOT NULL,
