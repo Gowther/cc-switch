@@ -147,6 +147,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["ccsub", "aggregator", "relay", "claude", "codex", "gateway"],
     defaultColor: "#1E88E5",
   },
+  sub2api: {
+    name: "sub2api",
+    displayName: "Sub2API",
+    category: "ai-provider",
+    keywords: ["sub2api", "subscription", "aggregator", "relay", "gateway"],
+    defaultColor: "#39D9E7",
+  },
   subrouter: {
     name: "subrouter",
     displayName: "SubRouter",
