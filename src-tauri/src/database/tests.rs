@@ -501,7 +501,7 @@ fn schema_v12_to_v13_adds_enabled_with_true_default() {
     .expect("seed v12 providers table");
     Database::set_user_version(&conn, 12).expect("set user_version=12");
 
-    Database::apply_schema_migrations(&conn).expect("migrate v12 to v13");
+    Database::apply_schema_migrations_on_conn(&conn).expect("migrate v12 to v13");
 
     let enabled: bool = conn
         .query_row(
