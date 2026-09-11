@@ -771,7 +771,7 @@ mod tests {
     fn sanitize_clean_id_passes_through() {
         assert_eq!(sanitize_server_name("github"), "github");
         assert_eq!(sanitize_server_name("my-server_2"), "my-server_2");
-        assert_eq!(sanitize_server_name("a".repeat(32)), "a".repeat(32));
+        assert_eq!(sanitize_server_name(&"a".repeat(32)), "a".repeat(32));
     }
 
     #[test]
