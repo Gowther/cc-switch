@@ -311,10 +311,7 @@ fn parse_block_entry(block_text: &str) -> Option<serde_yaml::Value> {
 
 /// 块可安全整体操作（删除/替换）：`insert` 列表非空、**所有**插件项都是
 /// dsh-mcp-client（不混入其他插件），且至少一项命中谓词。
-fn block_fully_matches(
-    block_text: &str,
-    predicate: &dyn Fn(&serde_yaml::Value) -> bool,
-) -> bool {
+fn block_fully_matches(block_text: &str, predicate: &dyn Fn(&serde_yaml::Value) -> bool) -> bool {
     let Some(entry) = parse_block_entry(block_text) else {
         return false;
     };
@@ -357,9 +354,10 @@ fn contains_custom_tag(block_text: &str) -> bool {
 
 /// 把一个插件项序列化为完整的 `- insert: [item]` 条目块文本（无尾换行）。
 fn serialize_entry_block(item: serde_yaml::Value) -> Result<String, AppError> {
-    let entry = serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([
-        (yaml_str("insert"), serde_yaml::Value::Sequence(vec![item])),
-    ]));
+    let entry = serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([(
+        yaml_str("insert"),
+        serde_yaml::Value::Sequence(vec![item]),
+    )]));
     let text = serde_yaml::to_string(&serde_yaml::Value::Sequence(vec![entry]))
         .map_err(|e| AppError::Config(format!("Failed to serialize dsh MCP patch entry: {e}")))?;
     Ok(text.trim_end().to_string())
@@ -447,7 +445,10 @@ fn build_insert_item(server_name: &str, spec: &Value) -> Result<serde_yaml::Valu
     }
 
     let item = serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([
-        (yaml_str("id"), yaml_str(&format!("{MANAGED_ID_PREFIX}{server_name}"))),
+        (
+            yaml_str("id"),
+            yaml_str(&format!("{MANAGED_ID_PREFIX}{server_name}")),
+        ),
         (yaml_str("name"), yaml_str(MCP_CLIENT_PLUGIN)),
         (yaml_str("config"), serde_yaml::Value::Mapping(config)),
     ]));
@@ -949,7 +950,9 @@ mod tests {
         let name = sanitize_server_name("foo.bar baz");
         assert!(name.starts_with("foo-bar-baz-"), "got: {name}");
         assert!(name.len() <= SERVER_NAME_MAX_LEN);
-        assert!(name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+        assert!(name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
     }
 
     #[test]
@@ -968,11 +971,20 @@ mod tests {
 
     #[test]
     fn sanitize_is_deterministic_and_disambiguates_collisions() {
-        assert_eq!(sanitize_server_name("foo.bar"), sanitize_server_name("foo.bar"));
+        assert_eq!(
+            sanitize_server_name("foo.bar"),
+            sanitize_server_name("foo.bar")
+        );
         // 两个折叠后同名的 id 必须因哈希后缀而不同
-        assert_ne!(sanitize_server_name("foo.bar"), sanitize_server_name("foo bar"));
+        assert_ne!(
+            sanitize_server_name("foo.bar"),
+            sanitize_server_name("foo bar")
+        );
         // 干净 id 不带哈希后缀，与脏 id 不冲突
-        assert_ne!(sanitize_server_name("foo-bar"), sanitize_server_name("foo.bar"));
+        assert_ne!(
+            sanitize_server_name("foo-bar"),
+            sanitize_server_name("foo.bar")
+        );
     }
 
     // ========================================================================
@@ -1001,7 +1013,10 @@ mod tests {
     fn split_blocks_rejects_non_list_top_level() {
         assert!(split_entry_blocks("foo: bar\n").is_err());
         assert!(split_entry_blocks("- a\nkey: value\n").is_err());
-        assert!(split_entry_blocks("# only comments\n").unwrap().1.is_empty());
+        assert!(split_entry_blocks("# only comments\n")
+            .unwrap()
+            .1
+            .is_empty());
     }
 
     // ========================================================================
@@ -1040,7 +1055,12 @@ mod tests {
             assert_eq!(config.get("command").unwrap().as_str(), Some("npx"));
             assert_eq!(config.get("args").unwrap().as_sequence().unwrap().len(), 2);
             assert_eq!(
-                config.get("env").unwrap().get("GITHUB_TOKEN").unwrap().as_str(),
+                config
+                    .get("env")
+                    .unwrap()
+                    .get("GITHUB_TOKEN")
+                    .unwrap()
+                    .as_str(),
                 Some("token")
             );
         });
@@ -1064,10 +1084,21 @@ mod tests {
             assert_eq!(seq.len(), 1);
             let item = seq[0].get("insert").unwrap().as_sequence().unwrap()[0].clone();
             let config = item.get("config").unwrap().clone();
-            assert_eq!(config.get("transport").unwrap().as_str(), Some("streamable-http"));
-            assert_eq!(config.get("url").unwrap().as_str(), Some("https://example.com/mcp"));
             assert_eq!(
-                config.get("headers").unwrap().get("Authorization").unwrap().as_str(),
+                config.get("transport").unwrap().as_str(),
+                Some("streamable-http")
+            );
+            assert_eq!(
+                config.get("url").unwrap().as_str(),
+                Some("https://example.com/mcp")
+            );
+            assert_eq!(
+                config
+                    .get("headers")
+                    .unwrap()
+                    .get("Authorization")
+                    .unwrap()
+                    .as_str(),
                 Some("Bearer xxx")
             );
         });
@@ -1124,7 +1155,10 @@ mod tests {
             let raw = read_raw();
 
             // 1) 文本级逐字保留：preamble、!!js 行（含原始缩进）、非映射条目
-            assert!(raw.starts_with("# 用户头部注释\n---\n"), "preamble 丢失: {raw}");
+            assert!(
+                raw.starts_with("# 用户头部注释\n---\n"),
+                "preamble 丢失: {raw}"
+            );
             assert!(
                 raw.contains("          GITHUB_TOKEN: !!js process.env.GITHUB_TOKEN"),
                 "!!js 行未逐字保留: {raw}"
@@ -1144,7 +1178,10 @@ mod tests {
                 .filter_map(|item| item.get("id"))
                 .filter_map(|id| id.as_str())
                 .collect();
-            assert!(!ids.contains(&"mcp-old"), "stale managed entry must go: {ids:?}");
+            assert!(
+                !ids.contains(&"mcp-old"),
+                "stale managed entry must go: {ids:?}"
+            );
             assert!(ids.contains(&"my-manual"));
             assert!(ids.contains(&"mcp-github"));
             assert!(ids.contains(&"mcp-web"));
@@ -1341,8 +1378,11 @@ mod tests {
 
             // 统一注册表里已有同名 server（其他应用启用中）
             let mut config = MultiAppConfig::default();
-            let (_, existing) =
-                make_server("github", json!({ "type": "stdio", "command": "npx" }), false);
+            let (_, existing) = make_server(
+                "github",
+                json!({ "type": "stdio", "command": "npx" }),
+                false,
+            );
             config
                 .mcp
                 .servers
