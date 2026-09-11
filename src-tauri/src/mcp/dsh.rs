@@ -25,14 +25,19 @@
 //! | `{"type":"stdio","command":..,"args":..,"env":..,"cwd":..}` | `transport: stdio` + command/args/env/cwd |
 //! | `{"type":"http"/"sse","url":..,"headers":..}`         | `transport: streamable-http` + url/headers |
 //!
-//! ## 保留语义
+//! ## 保留语义（文本级条目块管理）
 //!
-//! 文件中可能出现 `!!js` 自定义 YAML 标签（如 `!!js process.env.X`），
-//! serde_yaml 解析为 `Value::Tagged`。本模块只增删 cc-switch 管理的条目
-//! （`name == '@deepseek-ai/dsh-mcp-client'` 且 id 以 `mcp-` 开头，或
-//! serverName 与待写入目标相同），其余条目（含 Tagged 值）原样保留。
-//! 导入方向遇到无法安全转成纯字符串的 Tagged env/headers 值时跳过该
-//! server 并 log::warn，不做硬转。
+//! 文件中可能出现 `!!js` 自定义 YAML 标签（如 `!!js process.env.X`）。
+//! serde_yaml 0.9 会把这类标签值直接解析成普通 String（标签丢失），因此
+//! 整文档 Value 往返无法保留它们。本模块改为**文本级分块**：
+//! 按"行首 `- `（列 0）"把顶层切分为 preamble（头部注释/空行/`---`）+
+//! 若干条目块原文；只增删 cc-switch 管理的块（解析后 `name ==
+//! '@deepseek-ai/dsh-mcp-client'` 且 id 以 `mcp-` 开头，或 serverName
+//! 命中目标集），其余块连同 preamble 逐字回写。解析失败或非列表项的块
+//! 一律视为用户自有，原样保留。
+//!
+//! 导入方向在文本层检测自定义标签：含 `!!js`（或其他 `!` 标签）的 mcp
+//! 条目块无法安全转成纯字符串 env/headers，整块跳过并 log::warn，不硬转。
 
 use indexmap::IndexMap;
 use serde_json::{json, Value};
@@ -124,46 +129,114 @@ fn sanitize_server_name(id: &str) -> String {
 }
 
 // ============================================================================
-// cordis.patch.yml Read/Write（备份机制复用 dsh_config 的 create_dsh_backup）
+// cordis.patch.yml 文本级分块读写（备份机制复用 dsh_config 的 create_dsh_backup）
 // ============================================================================
 
-/// 读取 cordis.patch.yml 顶层 patch 条目列表。
+/// 读取并切分 cordis.patch.yml 为 `(preamble, 条目块原文列表)`。
 ///
-/// 文件不存在、为空或只含注释（解析为 Null）时返回空列表；
-/// 顶层不是列表（配置已损坏，dsh 自身也无法加载）时报 Config 错误而不是覆盖，
-/// 避免误毁用户数据。
-fn read_patch_entries() -> Result<Vec<serde_yaml::Value>, AppError> {
+/// 文件不存在、为空或只含注释（无 `- ` 块）时返回空 preamble + 空块列表。
+fn read_patch_blocks() -> Result<(String, Vec<String>), AppError> {
     let path = get_dsh_cordis_patch_path();
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok((String::new(), Vec::new()));
     }
 
     let content = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
     if content.trim().is_empty() {
-        return Ok(Vec::new());
+        return Ok((String::new(), Vec::new()));
     }
 
-    let value: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|e| {
-        AppError::Config(format!("Failed to parse dsh cordis.patch.yml as YAML: {e}"))
-    })?;
-    match value {
-        serde_yaml::Value::Null => Ok(Vec::new()),
-        serde_yaml::Value::Sequence(seq) => Ok(seq),
-        _ => Err(AppError::Config(
-            "dsh cordis.patch.yml top level must be a list of patch entries".to_string(),
-        )),
+    split_entry_blocks(&content)
+}
+
+/// 按"行首 `- `（列 0）"把 cordis.patch.yml 切分为 (preamble, 条目块原文)。
+///
+/// - preamble：首个条目前的注释/空行/`---` 文档标记（右端空行折叠）
+/// - 每个块：从 `- ` 行起到下一个 `- ` 行前的原始文本（含缩进续行、行内
+///   注释、`!!js` 等），右端空行折叠
+/// - 列 0 出现非 `- ` 的内容行（顶层不是纯列表，dsh loader 同样无法加载）
+///   → Config 错误而不是覆盖，避免误毁用户数据
+fn split_entry_blocks(text: &str) -> Result<(String, Vec<String>), AppError> {
+    let mut preamble_lines: Vec<&str> = Vec::new();
+    let mut blocks: Vec<String> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    let mut in_blocks = false;
+
+    for line in text.lines() {
+        let block_start = line.starts_with("- ") || line.trim_end() == "-";
+        if block_start {
+            if in_blocks {
+                push_block(&mut blocks, &current);
+                current = Vec::new();
+            }
+            in_blocks = true;
+            current.push(line);
+            continue;
+        }
+
+        if !in_blocks {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "---" {
+                preamble_lines.push(line);
+                continue;
+            }
+            return Err(AppError::Config(
+                "dsh cordis.patch.yml top level must be a list of patch entries".to_string(),
+            ));
+        }
+
+        // 条目块内部：缩进续行、空行、注释行都逐字属于该块
+        if line.starts_with([' ', '\t'])
+            || line.trim().is_empty()
+            || line.trim_start().starts_with('#')
+        {
+            current.push(line);
+        } else {
+            return Err(AppError::Config(
+                "dsh cordis.patch.yml top level must be a list of patch entries".to_string(),
+            ));
+        }
     }
+    if in_blocks {
+        push_block(&mut blocks, &current);
+    }
+
+    Ok((preamble_lines.join("\n").trim_end().to_string(), blocks))
+}
+
+/// 收尾一个条目块：合并行并折叠右端空行（块间空行不属任何块）
+fn push_block(blocks: &mut Vec<String>, lines: &[&str]) {
+    let text = lines.join("\n");
+    let trimmed = text.trim_end();
+    if !trimmed.is_empty() {
+        blocks.push(trimmed.to_string());
+    }
+}
+
+/// 重组文件文本：preamble + 各块原文，块间单个换行，文件末尾单个换行。
+/// 本模块写出的块自带此规范形，因此二次同步字节不变（幂等）。
+fn assemble_patch_text(preamble: &str, blocks: &[String]) -> String {
+    let mut out = String::new();
+    if !preamble.is_empty() {
+        out.push_str(preamble);
+        out.push('\n');
+    }
+    for block in blocks {
+        out.push_str(block);
+        out.push('\n');
+    }
+    out
 }
 
 /// 写回 cordis.patch.yml（写锁 + 写前备份 + atomic_write）。
 ///
-/// 内容与磁盘一致时 no-op（不备份、不写盘）；条目为空且文件不存在时同样 no-op，
-/// 避免为"清空"创建一个无意义的 `[]` 文件。
-fn write_patch_entries(entries: &[serde_yaml::Value]) -> Result<(), AppError> {
+/// 内容与磁盘一致时 no-op（不备份、不写盘）；preamble 与块都为空且文件不
+/// 存在时同样 no-op，避免为"清空"创建一个无意义的文件。
+fn write_patch_blocks(preamble: &str, blocks: &[String]) -> Result<(), AppError> {
     let _guard = dsh_mcp_write_lock().lock()?;
 
     let path = get_dsh_cordis_patch_path();
-    if entries.is_empty() && !path.exists() {
+    if preamble.is_empty() && blocks.is_empty() && !path.exists() {
         return Ok(());
     }
 
@@ -173,8 +246,7 @@ fn write_patch_entries(entries: &[serde_yaml::Value]) -> Result<(), AppError> {
         String::new()
     };
 
-    let serialized = serde_yaml::to_string(&serde_yaml::Value::Sequence(entries.to_vec()))
-        .map_err(|e| AppError::Config(format!("Failed to serialize dsh cordis.patch.yml: {e}")))?;
+    let serialized = assemble_patch_text(preamble, blocks);
 
     if serialized == raw {
         return Ok(());
@@ -194,7 +266,7 @@ fn write_patch_entries(entries: &[serde_yaml::Value]) -> Result<(), AppError> {
 }
 
 // ============================================================================
-// Entry / Item Helpers
+// Entry / Item / Block Helpers
 // ============================================================================
 
 fn yaml_str(s: &str) -> serde_yaml::Value {
@@ -223,54 +295,76 @@ fn is_mcp_client_item(item: &serde_yaml::Value) -> bool {
     item_plugin_name(item) == Some(MCP_CLIENT_PLUGIN)
 }
 
-/// 按条目级 `insert` 列表移除满足条件的插件项；条目被掏空（`insert` 是唯一键
-/// 且已空）时连条目一起删除。非 insert 条目与空 insert 的用户条目原样保留。
-fn remove_managed_items(
-    entries: &mut Vec<serde_yaml::Value>,
-    should_remove: impl Fn(&serde_yaml::Value) -> bool,
-) {
-    entries.retain_mut(|entry| {
-        let Some(seq) = entry.get_mut("insert").and_then(|v| v.as_sequence_mut()) else {
-            return true;
-        };
-        let before = seq.len();
-        seq.retain(|item| !(is_mcp_client_item(item) && should_remove(item)));
-        let emptied = seq.is_empty() && seq.len() < before;
-        let only_insert_key = entry.as_mapping().map(|m| m.len() == 1).unwrap_or(false);
-        !(emptied && only_insert_key)
-    });
-}
-
-/// Upsert 一个插件项：按 `id` 或 `config.serverName` 匹配已有插件项原位替换
-/// （幂等），否则追加一条新的 `- insert: [item]` 条目。
-fn upsert_managed_item(entries: &mut Vec<serde_yaml::Value>, item: serde_yaml::Value) {
-    let target_id = item_id(&item).unwrap_or_default().to_string();
-    let target_name = item_server_name(&item).unwrap_or_default().to_string();
-
-    for entry in entries.iter_mut() {
-        let Some(seq) = entry.get_mut("insert").and_then(|v| v.as_sequence_mut()) else {
-            continue;
-        };
-        for slot in seq.iter_mut() {
-            if !is_mcp_client_item(slot) {
-                continue;
-            }
-            let id_match = !target_id.is_empty() && item_id(slot) == Some(target_id.as_str());
-            let name_match =
-                !target_name.is_empty() && item_server_name(slot) == Some(target_name.as_str());
-            if id_match || name_match {
-                *slot = item;
-                return;
-            }
-        }
+/// 把单个条目块文本解析为 patch 条目 Value（块是一个单元素 YAML 列表，
+/// 元素应为映射）。解析失败、不是列表或元素不是映射 → None（用户自有）。
+///
+/// 注意：serde_yaml 0.9 会把 `!!js x` 解析成普通 String（标签丢失），所以
+/// 这里解析出的 Value 只能用于**分类判断**，绝不能回写——回写一律用块原文。
+fn parse_block_entry(block_text: &str) -> Option<serde_yaml::Value> {
+    let value: serde_yaml::Value = serde_yaml::from_str(block_text).ok()?;
+    let seq = value.as_sequence()?;
+    if seq.len() != 1 {
+        return None;
     }
-
-    let entry = serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([(
-        yaml_str("insert"),
-        serde_yaml::Value::Sequence(vec![item]),
-    )]));
-    entries.push(entry);
+    seq.first().filter(|v| v.is_mapping()).cloned()
 }
+
+/// 块可安全整体操作（删除/替换）：`insert` 列表非空、**所有**插件项都是
+/// dsh-mcp-client（不混入其他插件），且至少一项命中谓词。
+fn block_fully_matches(
+    block_text: &str,
+    predicate: &dyn Fn(&serde_yaml::Value) -> bool,
+) -> bool {
+    let Some(entry) = parse_block_entry(block_text) else {
+        return false;
+    };
+    let Some(items) = entry.get("insert").and_then(|v| v.as_sequence()) else {
+        return false;
+    };
+    !items.is_empty()
+        && items.iter().all(is_mcp_client_item)
+        && items.iter().any(|item| predicate(item))
+}
+
+/// 块内有命中谓词的 mcp 项，但混入其他插件项（或形态不纯）——文本级无法
+/// 安全手术，只能整体保留并告警。
+fn block_partially_matches(
+    block_text: &str,
+    predicate: &dyn Fn(&serde_yaml::Value) -> bool,
+) -> bool {
+    let Some(entry) = parse_block_entry(block_text) else {
+        return false;
+    };
+    let Some(items) = entry.get("insert").and_then(|v| v.as_sequence()) else {
+        return false;
+    };
+    items
+        .iter()
+        .any(|item| is_mcp_client_item(item) && predicate(item))
+        && !block_fully_matches(block_text, predicate)
+}
+
+/// 保守检测块文本是否含 YAML 自定义标签（`!!js`、`!foo`、`!<...>`）。
+/// 整行注释不参与判定；按空白分词后任何 token 以 `!` 开头即命中。
+/// serde_yaml 在 Value 层会丢标签，只能在文本层判断（宁多勿漏）。
+fn contains_custom_tag(block_text: &str) -> bool {
+    block_text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .flat_map(str::split_whitespace)
+        .any(|token| token.starts_with('!'))
+}
+
+/// 把一个插件项序列化为完整的 `- insert: [item]` 条目块文本（无尾换行）。
+fn serialize_entry_block(item: serde_yaml::Value) -> Result<String, AppError> {
+    let entry = serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([
+        (yaml_str("insert"), serde_yaml::Value::Sequence(vec![item])),
+    ]));
+    let text = serde_yaml::to_string(&serde_yaml::Value::Sequence(vec![entry]))
+        .map_err(|e| AppError::Config(format!("Failed to serialize dsh MCP patch entry: {e}")))?;
+    Ok(text.trim_end().to_string())
+}
+
 // ============================================================================
 // Format Conversion: CC Switch -> dsh
 // ============================================================================
@@ -353,10 +447,7 @@ fn build_insert_item(server_name: &str, spec: &Value) -> Result<serde_yaml::Valu
     }
 
     let item = serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([
-        (
-            yaml_str("id"),
-            yaml_str(&format!("{MANAGED_ID_PREFIX}{server_name}")),
-        ),
+        (yaml_str("id"), yaml_str(&format!("{MANAGED_ID_PREFIX}{server_name}"))),
         (yaml_str("name"), yaml_str(MCP_CLIENT_PLUGIN)),
         (yaml_str("config"), serde_yaml::Value::Mapping(config)),
     ]));
@@ -523,7 +614,8 @@ fn convert_from_dsh_item(item: &serde_yaml::Value) -> Result<(String, Value), Ap
 // Public API: Sync Functions
 // ============================================================================
 
-/// Sync a single MCP server to dsh live config（按 id/serverName upsert，幂等）
+/// Sync a single MCP server to dsh live config（按 id/serverName 原位替换
+/// 已有管理块，幂等；不存在则追加新块；用户其他块逐字不动）
 pub fn sync_single_server_to_dsh(
     _config: &MultiAppConfig,
     id: &str,
@@ -535,10 +627,45 @@ pub fn sync_single_server_to_dsh(
 
     let server_name = sanitize_server_name(id);
     let item = build_insert_item(&server_name, server_spec)?;
+    let new_block = serialize_entry_block(item)?;
 
-    let mut entries = read_patch_entries()?;
-    upsert_managed_item(&mut entries, item);
-    write_patch_entries(&entries)
+    let (preamble, blocks) = read_patch_blocks()?;
+    let managed_id = format!("{MANAGED_ID_PREFIX}{server_name}");
+    let matches_target = |item: &serde_yaml::Value| {
+        item_id(item) == Some(managed_id.as_str())
+            || item_server_name(item) == Some(server_name.as_str())
+    };
+
+    let mut out = Vec::with_capacity(blocks.len() + 1);
+    let mut inserted = false;
+    let mut blocked_by_mixed = false;
+    for block in blocks {
+        if block_fully_matches(&block, &matches_target) {
+            // 原位替换第一个命中块；同目标的重复管理块去重丢弃
+            if !inserted {
+                out.push(new_block.clone());
+                inserted = true;
+            }
+        } else {
+            if block_partially_matches(&block, &matches_target) {
+                blocked_by_mixed = true;
+            }
+            out.push(block);
+        }
+    }
+    if !inserted {
+        if blocked_by_mixed {
+            // 混合块（mcp 项与其他插件项共存）无法文本级手术，追加新块会
+            // 造成条目 id 重复（dsh 要求唯一），告警并保持现状。
+            log::warn!(
+                "dsh MCP server '{server_name}' lives in a mixed insert block; skipping sync to avoid a duplicate entry id"
+            );
+        } else {
+            out.push(new_block);
+        }
+    }
+
+    write_patch_blocks(&preamble, &out)
 }
 
 /// Remove a single MCP server from dsh live config
@@ -550,22 +677,38 @@ pub fn remove_server_from_dsh(id: &str) -> Result<(), AppError> {
     let server_name = sanitize_server_name(id);
     let managed_id = format!("{MANAGED_ID_PREFIX}{server_name}");
 
-    let mut entries = read_patch_entries()?;
-    if entries.is_empty() {
+    let (preamble, blocks) = read_patch_blocks()?;
+    if blocks.is_empty() {
         return Ok(());
     }
-    remove_managed_items(&mut entries, |item| {
+
+    let matches_target = |item: &serde_yaml::Value| {
         item_id(item) == Some(managed_id.as_str())
             || item_server_name(item) == Some(server_name.as_str())
+    };
+    let before = blocks.len();
+    blocks.retain(|block| {
+        if block_partially_matches(block, &matches_target) {
+            log::warn!(
+                "dsh MCP server '{server_name}' lives in a mixed insert block; leaving it untouched"
+            );
+            return true;
+        }
+        !block_fully_matches(block, &matches_target)
     });
-    write_patch_entries(&entries)
+    if blocks.len() == before {
+        return Ok(());
+    }
+
+    write_patch_blocks(&preamble, &blocks)
 }
 
-/// 重建所有 cc-switch 管理的 dsh MCP 条目（保留非管理条目，含 `!!js` Tagged）。
+/// 重建所有 cc-switch 管理的 dsh MCP 条目块（preamble 与非管理块原文
+/// 逐字保留，含 `!!js` 标签）。
 ///
-/// 旧管理条目（id 以 `mcp-` 开头的插件项）与 serverName 命中本次目标集的
-/// 插件项先整体剥离，再按当前启用清单重建——改名/禁用留下的陈旧条目因此
-/// 被清掉，而用户手写的其他条目逐字保留。
+/// 旧管理块（`insert` 项均为 dsh-mcp-client 且 id 以 `mcp-` 开头，或
+/// serverName 命中本次目标集）先整体剥离，再按当前启用清单重建——改名/
+/// 禁用留下的陈旧块因此被清掉，而用户手写的其他条目逐字保留。
 pub fn sync_enabled_to_dsh(servers: &IndexMap<String, McpServer>) -> Result<(), AppError> {
     if !should_sync_dsh_mcp() {
         return Ok(());
@@ -577,8 +720,8 @@ pub fn sync_enabled_to_dsh(servers: &IndexMap<String, McpServer>) -> Result<(), 
         .map(|server| sanitize_server_name(&server.id))
         .collect();
 
-    let mut entries = read_patch_entries()?;
-    remove_managed_items(&mut entries, |item| {
+    let (preamble, blocks) = read_patch_blocks()?;
+    let is_stale = |item: &serde_yaml::Value| {
         let managed_id = item_id(item)
             .map(|id| id.starts_with(MANAGED_ID_PREFIX))
             .unwrap_or(false);
@@ -586,25 +729,39 @@ pub fn sync_enabled_to_dsh(servers: &IndexMap<String, McpServer>) -> Result<(), 
             .map(|name| target_names.contains(name))
             .unwrap_or(false);
         managed_id || targeted
-    });
+    };
+
+    let mut out = Vec::with_capacity(blocks.len() + enabled.len());
+    for block in blocks {
+        if block_fully_matches(&block, &is_stale) {
+            continue;
+        }
+        if block_partially_matches(&block, &is_stale) {
+            log::warn!(
+                "dsh cordis.patch.yml has a mixed insert block containing a managed MCP entry; leaving it untouched"
+            );
+        }
+        out.push(block);
+    }
 
     for server in enabled {
         let server_name = sanitize_server_name(&server.id);
         let item = build_insert_item(&server_name, &server.server)?;
-        upsert_managed_item(&mut entries, item);
+        out.push(serialize_entry_block(item)?);
     }
 
-    write_patch_entries(&entries)
+    write_patch_blocks(&preamble, &out)
 }
 
 /// Import MCP servers from dsh cordis.patch.yml to unified structure
 ///
 /// 采纳所有 `@deepseek-ai/dsh-mcp-client` 插件项（不论 id 是否 `mcp-` 前缀），
 /// `serverName` 原样作为统一注册表 id。已存在的 server 仅启用 dsh 应用标记，
-/// 不覆盖其他字段。含 `!!js` Tagged 值等无法安全转换的条目跳过并 log::warn。
+/// 不覆盖其他字段。块文本含 `!!js` 等自定义标签时整块跳过并 log::warn
+/// （serde_yaml 在 Value 层会丢标签，无法安全转换，只能保守跳过）。
 pub fn import_from_dsh(config: &mut MultiAppConfig) -> Result<usize, AppError> {
-    let entries = read_patch_entries()?;
-    if entries.is_empty() {
+    let (_preamble, blocks) = read_patch_blocks()?;
+    if blocks.is_empty() {
         return Ok(0);
     }
 
@@ -614,10 +771,23 @@ pub fn import_from_dsh(config: &mut MultiAppConfig) -> Result<usize, AppError> {
     let mut changed = 0;
     let mut errors = Vec::new();
 
-    for entry in &entries {
+    for block in &blocks {
+        // 非映射条目（裸字符串、解析失败等）：用户自有内容，直接忽略
+        let Some(entry) = parse_block_entry(block) else {
+            continue;
+        };
         let Some(items) = entry.get("insert").and_then(|v| v.as_sequence()) else {
             continue;
         };
+        if !items.iter().any(is_mcp_client_item) {
+            continue;
+        }
+        if contains_custom_tag(block) {
+            log::warn!(
+                "Skip dsh MCP import for a block with custom YAML tags (!!js etc.): not safe to convert"
+            );
+            continue;
+        }
 
         for item in items {
             if !is_mcp_client_item(item) {
@@ -771,7 +941,7 @@ mod tests {
     fn sanitize_clean_id_passes_through() {
         assert_eq!(sanitize_server_name("github"), "github");
         assert_eq!(sanitize_server_name("my-server_2"), "my-server_2");
-        assert_eq!(sanitize_server_name(&"a".repeat(32)), "a".repeat(32));
+        assert_eq!(sanitize_server_name("a".repeat(32)), "a".repeat(32));
     }
 
     #[test]
@@ -779,9 +949,7 @@ mod tests {
         let name = sanitize_server_name("foo.bar baz");
         assert!(name.starts_with("foo-bar-baz-"), "got: {name}");
         assert!(name.len() <= SERVER_NAME_MAX_LEN);
-        assert!(name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+        assert!(name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
     }
 
     #[test]
@@ -800,20 +968,40 @@ mod tests {
 
     #[test]
     fn sanitize_is_deterministic_and_disambiguates_collisions() {
-        assert_eq!(
-            sanitize_server_name("foo.bar"),
-            sanitize_server_name("foo.bar")
-        );
+        assert_eq!(sanitize_server_name("foo.bar"), sanitize_server_name("foo.bar"));
         // 两个折叠后同名的 id 必须因哈希后缀而不同
-        assert_ne!(
-            sanitize_server_name("foo.bar"),
-            sanitize_server_name("foo bar")
-        );
+        assert_ne!(sanitize_server_name("foo.bar"), sanitize_server_name("foo bar"));
         // 干净 id 不带哈希后缀，与脏 id 不冲突
-        assert_ne!(
-            sanitize_server_name("foo-bar"),
-            sanitize_server_name("foo.bar")
-        );
+        assert_ne!(sanitize_server_name("foo-bar"), sanitize_server_name("foo.bar"));
+    }
+
+    // ========================================================================
+    // split_entry_blocks tests
+    // ========================================================================
+
+    #[test]
+    fn split_blocks_preserves_preamble_and_verbatim_text() {
+        let text = "# 用户头部注释\n---\n- insert:\n    - id: a\n      env:\n        K: !!js process.env.K\n\n- id: b\n  disabled: true\n";
+        let (preamble, blocks) = split_entry_blocks(text).unwrap();
+        assert_eq!(preamble, "# 用户头部注释\n---");
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks[0].contains("K: !!js process.env.K"));
+        assert!(!blocks[0].ends_with('\n'), "块右端空行被折叠");
+        assert!(blocks[1].starts_with("- id: b"));
+
+        // 重组幂等：preamble + 块逐字 + 单换行
+        let reassembled = assemble_patch_text(&preamble, &blocks);
+        let (preamble2, blocks2) = split_entry_blocks(&reassembled).unwrap();
+        assert_eq!(preamble2, preamble);
+        assert_eq!(blocks2, blocks);
+        assert_eq!(assemble_patch_text(&preamble2, &blocks2), reassembled);
+    }
+
+    #[test]
+    fn split_blocks_rejects_non_list_top_level() {
+        assert!(split_entry_blocks("foo: bar\n").is_err());
+        assert!(split_entry_blocks("- a\nkey: value\n").is_err());
+        assert!(split_entry_blocks("# only comments\n").unwrap().1.is_empty());
     }
 
     // ========================================================================
@@ -852,12 +1040,7 @@ mod tests {
             assert_eq!(config.get("command").unwrap().as_str(), Some("npx"));
             assert_eq!(config.get("args").unwrap().as_sequence().unwrap().len(), 2);
             assert_eq!(
-                config
-                    .get("env")
-                    .unwrap()
-                    .get("GITHUB_TOKEN")
-                    .unwrap()
-                    .as_str(),
+                config.get("env").unwrap().get("GITHUB_TOKEN").unwrap().as_str(),
                 Some("token")
             );
         });
@@ -881,21 +1064,10 @@ mod tests {
             assert_eq!(seq.len(), 1);
             let item = seq[0].get("insert").unwrap().as_sequence().unwrap()[0].clone();
             let config = item.get("config").unwrap().clone();
+            assert_eq!(config.get("transport").unwrap().as_str(), Some("streamable-http"));
+            assert_eq!(config.get("url").unwrap().as_str(), Some("https://example.com/mcp"));
             assert_eq!(
-                config.get("transport").unwrap().as_str(),
-                Some("streamable-http")
-            );
-            assert_eq!(
-                config.get("url").unwrap().as_str(),
-                Some("https://example.com/mcp")
-            );
-            assert_eq!(
-                config
-                    .get("headers")
-                    .unwrap()
-                    .get("Authorization")
-                    .unwrap()
-                    .as_str(),
+                config.get("headers").unwrap().get("Authorization").unwrap().as_str(),
                 Some("Bearer xxx")
             );
         });
@@ -905,10 +1077,13 @@ mod tests {
     #[serial]
     fn sync_enabled_rebuilds_managed_and_preserves_tagged_entries() {
         with_test_home(|| {
-            // 预置：一个含 !!js Tagged 值的用户手写条目（非 mcp- 前缀 id），
-            // 一个陈旧的 cc-switch 管理条目（mcp-old）
+            // 预置：preamble（注释 + `---`）、一个含 !!js 标签的用户手写条目
+            // （非 mcp- 前缀 id）、一个陈旧的 cc-switch 管理条目（mcp-old）、
+            // 一个其他插件 patch、一个非映射条目
             seed_dsh_dir(Some(
                 "\
+# 用户头部注释
+---
 - insert:
     - id: my-manual
       name: '@deepseek-ai/dsh-mcp-client'
@@ -927,6 +1102,7 @@ mod tests {
         command: old-cmd
 - id: some-other-plugin
   disabled: true
+- just-a-string-entry
 ",
             ));
 
@@ -945,27 +1121,21 @@ mod tests {
             ]);
             sync_enabled_to_dsh(&servers).unwrap();
 
-            let yaml = read_yaml();
-            let seq = yaml.as_sequence().unwrap();
-            // 用户手写条目 + 其他插件 patch 保留；mcp-old 被清掉；新增 github/web
-            assert_eq!(seq.len(), 4);
+            let raw = read_raw();
 
-            // 1) 手写条目保留且 !!js 值仍是 Tagged
-            let manual = &seq[0].get("insert").unwrap().as_sequence().unwrap()[0];
-            assert_eq!(manual.get("id").unwrap().as_str(), Some("my-manual"));
-            let tagged = manual
-                .get("config")
-                .unwrap()
-                .get("env")
-                .unwrap()
-                .get("GITHUB_TOKEN")
-                .unwrap();
+            // 1) 文本级逐字保留：preamble、!!js 行（含原始缩进）、非映射条目
+            assert!(raw.starts_with("# 用户头部注释\n---\n"), "preamble 丢失: {raw}");
             assert!(
-                matches!(tagged, serde_yaml::Value::Tagged(_)),
-                "!!js value must survive as a tagged value, got: {tagged:?}"
+                raw.contains("          GITHUB_TOKEN: !!js process.env.GITHUB_TOKEN"),
+                "!!js 行未逐字保留: {raw}"
             );
+            assert!(raw.contains("- just-a-string-entry\n"));
+            assert!(raw.contains("- id: some-other-plugin\n  disabled: true"));
 
-            // 2) 陈旧管理条目被移除
+            // 2) 结构上：陈旧管理条目被清掉，新条目写入
+            let yaml: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
+            let seq = yaml.as_sequence().unwrap();
+            assert_eq!(seq.len(), 5);
             let ids: Vec<&str> = seq
                 .iter()
                 .filter_map(|e| e.get("insert"))
@@ -974,16 +1144,15 @@ mod tests {
                 .filter_map(|item| item.get("id"))
                 .filter_map(|id| id.as_str())
                 .collect();
-            assert!(
-                !ids.contains(&"mcp-old"),
-                "stale managed entry must go: {ids:?}"
-            );
+            assert!(!ids.contains(&"mcp-old"), "stale managed entry must go: {ids:?}");
+            assert!(ids.contains(&"my-manual"));
             assert!(ids.contains(&"mcp-github"));
             assert!(ids.contains(&"mcp-web"));
             assert!(!ids.contains(&"mcp-disabled-one"));
 
-            // 3) 非 insert 的其他 patch 条目保留
-            assert!(seq.iter().any(|e| e.get("disabled").is_some()));
+            // 3) 二次同步字节不变（幂等）
+            sync_enabled_to_dsh(&servers).unwrap();
+            assert_eq!(raw, read_raw(), "second sync must be byte-identical");
         });
     }
 
@@ -1027,7 +1196,7 @@ mod tests {
             let item = &seq[0].get("insert").unwrap().as_sequence().unwrap()[0];
             assert_eq!(item.get("id").unwrap().as_str(), Some("mcp-b"));
 
-            // 再删一次是 no-op（不存在不报错）
+            // 再删一次是 no-op（不存在不报错、不写盘）
             remove_server_from_dsh("a").unwrap();
             remove_server_from_dsh("ghost").unwrap();
             let yaml = read_yaml();
@@ -1148,7 +1317,7 @@ mod tests {
             let mut config = MultiAppConfig::default();
             let changed = import_from_dsh(&mut config).unwrap();
 
-            // manual 条目 env 含 !!js Tagged 值 → 跳过；clean 条目正常导入
+            // manual 块含 !!js 自定义标签 → 文本层整块跳过；clean 块正常导入
             assert_eq!(changed, 1);
             let imported = config.mcp.servers.as_ref().unwrap();
             assert!(!imported.contains_key("manual"));
@@ -1172,11 +1341,8 @@ mod tests {
 
             // 统一注册表里已有同名 server（其他应用启用中）
             let mut config = MultiAppConfig::default();
-            let (_, existing) = make_server(
-                "github",
-                json!({ "type": "stdio", "command": "npx" }),
-                false,
-            );
+            let (_, existing) =
+                make_server("github", json!({ "type": "stdio", "command": "npx" }), false);
             config
                 .mcp
                 .servers

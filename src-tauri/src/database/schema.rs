@@ -1345,18 +1345,22 @@ impl Database {
 
     /// v13 -> v14 迁移：mcp_servers / skills 表添加 dsh 与 zcode 应用启用列
     fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
-        Self::add_column_if_missing(
-            conn,
-            "mcp_servers",
-            "enabled_dsh",
-            "BOOLEAN NOT NULL DEFAULT 0",
-        )?;
-        Self::add_column_if_missing(
-            conn,
-            "mcp_servers",
-            "enabled_zcode",
-            "BOOLEAN NOT NULL DEFAULT 0",
-        )?;
+        // mcp_servers / skills 表在非常旧的库（或未走过对应建表迁移的 fixture）
+        // 里可能不存在，与 skills 一样加 table_exists 守卫
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_dsh",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_zcode",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
 
         // skills table may not exist in databases migrated from very old versions
         if Self::table_exists(conn, "skills")? {
