@@ -678,7 +678,7 @@ pub fn remove_server_from_dsh(id: &str) -> Result<(), AppError> {
     let server_name = sanitize_server_name(id);
     let managed_id = format!("{MANAGED_ID_PREFIX}{server_name}");
 
-    let (preamble, blocks) = read_patch_blocks()?;
+    let (preamble, mut blocks) = read_patch_blocks()?;
     if blocks.is_empty() {
         return Ok(());
     }
