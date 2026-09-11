@@ -43,6 +43,9 @@ impl McpService {
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
+        if prev_apps.dsh && !server.apps.dsh {
+            Self::remove_server_from_app(state, &server.id, &AppType::Dsh)?;
+        }
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
@@ -137,6 +140,9 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Dsh => {
+                mcp::sync_single_server_to_dsh(&Default::default(), &server.id, &server.server)?;
+            }
         }
         Ok(())
     }
@@ -171,6 +177,9 @@ impl McpService {
             }
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
+            }
+            AppType::Dsh => {
+                mcp::remove_server_from_dsh(id)?;
             }
         }
         Ok(())
@@ -218,6 +227,12 @@ impl McpService {
     ) -> Result<(), AppError> {
         if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
             return Ok(());
+        }
+
+        // dsh 的 cordis.patch.yml 以条目为单位增删，整体重建幂等且能清掉
+        // 改名/禁用留下的陈旧管理条目（非管理条目，含 !!js Tagged，原样保留）。
+        if matches!(app, AppType::Dsh) {
+            return mcp::sync_enabled_to_dsh(servers);
         }
 
         for server in servers.values() {
@@ -469,6 +484,44 @@ impl McpService {
         Ok(new_count)
     }
 
+    /// 从 dsh 导入 MCP
+    pub fn import_from_dsh(state: &AppState) -> Result<usize, AppError> {
+        // 创建临时 MultiAppConfig 用于导入
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+
+        // 调用导入逻辑（从 mcp/dsh.rs）
+        let count = crate::mcp::import_from_dsh(&mut temp_config)?;
+
+        let mut new_count = 0;
+
+        // 如果有导入的服务器，保存到数据库
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    // 已存在：仅启用 dsh，不覆盖其他字段（与导入模块语义保持一致）
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.dsh = true;
+                        merged
+                    } else {
+                        // 真正的新服务器
+                        new_count += 1;
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+
+                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
+                    // 显式编辑、启用/禁用或手动同步时再执行写回。
+                }
+            }
+        }
+
+        Ok(new_count)
+    }
+
     /// 从所有支持 MCP 的应用导入服务器，返回新导入的数量。
     ///
     /// Best-effort：单个应用导入失败（如坏 config.toml）不阻断其余应用；
@@ -479,12 +532,13 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 5] = [
+        let results: [(&str, Result<usize, AppError>); 6] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
             ("opencode", Self::import_from_opencode(state)),
             ("hermes", Self::import_from_hermes(state)),
+            ("dsh", Self::import_from_dsh(state)),
         ];
         for (app, result) in results {
             match result {

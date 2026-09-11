@@ -18,6 +18,14 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         ));
     }
 
+    if matches!(app, AppType::Dsh) {
+        return Err(AppError::localized(
+            "dsh.prompts_unsupported",
+            "dsh 暂不支持 Prompts",
+            "dsh does not support Prompts",
+        ));
+    }
+
     let base_dir: PathBuf = match app {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
@@ -26,6 +34,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::Dsh => unreachable!("handled above"),
     };
 
     let filename = match app {
@@ -34,6 +43,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => "GEMINI.md",
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::Dsh => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))

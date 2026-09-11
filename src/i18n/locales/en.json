@@ -777,12 +777,15 @@
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
+    "dshConfigDir": "DSH Configuration Directory",
+    "dshConfigDirDescription": "Override DSH (DeepSeek Harness) configuration directory.",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
+    "browsePlaceholderDsh": "e.g., /home/<your-username>/.dsh",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -892,7 +895,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "dsh": "DSH"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1721,7 +1725,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "dsh": "DSH"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -2137,6 +2142,33 @@
       "loadFailed": "Failed to read memory file",
       "openConfig": "Adjust limits in Hermes Web UI",
       "runtimeNote": "Changes apply on Hermes restart or new session."
+    }
+  },
+  "dsh": {
+    "form": {
+      "baseUrl": "API Endpoint",
+      "baseUrlHint": "The API endpoint URL for this provider.",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Used as the provider name in the DSH config.",
+      "providerKeyLockedHint": "This provider is in DSH config; key is locked.",
+      "providerKeyRequired": "Provider key is required",
+      "providerKeyInvalid": "Provider key can only contain lowercase letters, numbers, and hyphens",
+      "providerKeyDuplicate": "This provider key already exists",
+      "api": "API Mode",
+      "apiHint": "Provider API protocol. Choose the format that matches your endpoint.",
+      "apiOpenaiCompletions": "OpenAI Chat Completions",
+      "apiOpenaiResponses": "OpenAI Responses",
+      "apiAnthropicMessages": "Anthropic Messages",
+      "baseUrlRequired": "API endpoint is required",
+      "baseUrlScheme": "Use an http:// or https:// address",
+      "baseUrlInvalid": "API endpoint is not a valid URL",
+      "models": "Models",
+      "addModel": "Add model",
+      "noModels": "No models configured.",
+      "modelId": "Model ID",
+      "modelIdPlaceholder": "deepseek-chat",
+      "modelsHint": "Models available for this provider. Optional model attributes (e.g. input, reasoningEfforts) can be edited in the JSON below."
     }
   },
   "env": {

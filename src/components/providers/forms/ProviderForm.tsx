@@ -50,9 +50,14 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import {
+  dshProviderPresets,
+  type DshProviderPreset,
+} from "@/config/dshProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
+import { DshFormFields } from "./DshFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -103,6 +108,7 @@ import {
   useOmoDraftState,
   useOpenclawFormState,
   useHermesFormState,
+  useDshFormState,
   useCopilotAuth,
   useCodexOauth,
 } from "./hooks";
@@ -117,6 +123,7 @@ import {
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
+import { DSH_DEFAULT_CONFIG } from "./hooks/useDshFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
@@ -129,7 +136,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | DshProviderPreset;
 };
 
 export const normalizeCodexCatalogModelsForSave = (
@@ -391,7 +399,9 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                  : appId === "dsh"
+                    ? DSH_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -682,6 +692,11 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "dsh") {
+      return dshProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `dsh-${index}`,
+        preset,
+      }));
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -892,6 +907,23 @@ function ProviderFormFull({
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
 
+  const dshForm = useDshFormState({
+    initialData,
+    appId,
+    providerId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
+  // DSH: 查询 live 配置中的供应商 ID 列表，用于判断 key 锁定与重复
+  const {
+    data: dshLiveProviderIds = [],
+    isLoading: isDshLiveProviderIdsLoading,
+  } = useQuery({
+    queryKey: ["dshLiveProviderIds"],
+    queryFn: () => providersApi.getDshLiveProviderIds(),
+    enabled: appId === "dsh",
+  });
+
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
       return Array.from(
@@ -924,12 +956,24 @@ function ProviderFormFull({
       );
     }
 
+    if (appId === "dsh") {
+      return Array.from(
+        new Set(
+          [...dshForm.existingDshKeys, ...dshLiveProviderIds].filter(
+            (key) => key !== providerId,
+          ),
+        ),
+      );
+    }
+
     return [];
   }, [
     appId,
     existingOpencodeKeys,
     hermesForm.existingHermesKeys,
     hermesLiveProviderIds,
+    dshForm.existingDshKeys,
+    dshLiveProviderIds,
     isAnyOmoCategory,
     openclawForm.existingOpenclawKeys,
     openclawLiveProviderIds,
@@ -948,12 +992,16 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return isHermesLiveProviderIdsLoading;
     }
+    if (appId === "dsh") {
+      return isDshLiveProviderIdsLoading;
+    }
     return false;
   }, [
     appId,
     isAnyOmoCategory,
     isEditMode,
     isHermesLiveProviderIdsLoading,
+    isDshLiveProviderIdsLoading,
     isOpenclawLiveProviderIdsLoading,
     isOpencodeLiveProviderIdsLoading,
   ]);
@@ -969,10 +1017,14 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return hermesLiveProviderIds.includes(providerId);
     }
+    if (appId === "dsh") {
+      return dshLiveProviderIds.includes(providerId);
+    }
     return false;
   }, [
     appId,
     hermesLiveProviderIds,
+    dshLiveProviderIds,
     isAnyOmoCategory,
     isEditMode,
     openclawLiveProviderIds,
@@ -1211,6 +1263,32 @@ function ProviderFormFull({
         additiveExistingProviderKeys.includes(hermesForm.hermesProviderKey)
       ) {
         toast.error(t("hermes.form.providerKeyDuplicate"));
+        return;
+      }
+    }
+
+    if (appId === "dsh") {
+      if (!dshForm.dshProviderKey.trim()) {
+        toast.error(t("dsh.form.providerKeyRequired"));
+        return;
+      }
+      if (!keyPattern.test(dshForm.dshProviderKey)) {
+        toast.error(t("dsh.form.providerKeyInvalid"));
+        return;
+      }
+      if (isProviderKeyLockStateLoading) {
+        toast.error(
+          t("providerForm.providerKeyStatusLoading", {
+            defaultValue: "正在加载供应商标识状态，请稍后再试",
+          }),
+        );
+        return;
+      }
+      if (
+        !isProviderKeyLocked &&
+        additiveExistingProviderKeys.includes(dshForm.dshProviderKey)
+      ) {
+        toast.error(t("dsh.form.providerKeyDuplicate"));
         return;
       }
     }
@@ -1454,6 +1532,8 @@ function ProviderFormFull({
       payload.providerKey = openclawForm.openclawProviderKey;
     } else if (appId === "hermes") {
       payload.providerKey = hermesForm.hermesProviderKey;
+    } else if (appId === "dsh") {
+      payload.providerKey = dshForm.dshProviderKey;
     }
 
     if (isAnyOmoCategory && !payload.presetCategory) {
@@ -1715,6 +1795,20 @@ function ProviderFormFull({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  // 使用 API Key 链接 hook (DSH)
+  const {
+    shouldShowApiKeyLink: shouldShowDshApiKeyLink,
+    websiteUrl: dshWebsiteUrl,
+    isPartner: isDshPartner,
+    partnerPromotionKey: dshPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "dsh",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -1753,6 +1847,9 @@ function ProviderFormFull({
       }
       if (appId === "hermes") {
         hermesForm.resetHermesState();
+      }
+      if (appId === "dsh") {
+        dshForm.resetDshState();
       }
       return;
     }
@@ -1870,6 +1967,23 @@ function ProviderFormFull({
       const config = preset.settingsConfig;
 
       hermesForm.resetHermesState(config);
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    // DSH preset handling
+    if (appId === "dsh") {
+      const preset = entry.preset as DshProviderPreset;
+      const config = preset.settingsConfig;
+
+      dshForm.resetDshState(config);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2145,6 +2259,79 @@ function ProviderFormFull({
                       </p>
                     )}
                 </div>
+              ) : appId === "dsh" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="dsh-key">
+                    {t("dsh.form.providerKey", {
+                      defaultValue: "Provider Key",
+                    })}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <Input
+                    id="dsh-key"
+                    value={dshForm.dshProviderKey}
+                    onChange={(e) =>
+                      dshForm.setDshProviderKey(
+                        e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                      )
+                    }
+                    placeholder={t("dsh.form.providerKeyPlaceholder", {
+                      defaultValue: "my-provider",
+                    })}
+                    disabled={
+                      isProviderKeyLocked || isProviderKeyLockStateLoading
+                    }
+                    className={
+                      (additiveExistingProviderKeys.includes(
+                        dshForm.dshProviderKey,
+                      ) &&
+                        !isProviderKeyLocked) ||
+                      (dshForm.dshProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          dshForm.dshProviderKey,
+                        ))
+                        ? "border-destructive"
+                        : ""
+                    }
+                  />
+                  {additiveExistingProviderKeys.includes(
+                    dshForm.dshProviderKey,
+                  ) &&
+                    !isProviderKeyLocked && (
+                      <p className="text-xs text-destructive">
+                        {t("dsh.form.providerKeyDuplicate")}
+                      </p>
+                    )}
+                  {dshForm.dshProviderKey.trim() !== "" &&
+                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                      dshForm.dshProviderKey,
+                    ) && (
+                      <p className="text-xs text-destructive">
+                        {t("dsh.form.providerKeyInvalid")}
+                      </p>
+                    )}
+                  {!(
+                    additiveExistingProviderKeys.includes(
+                      dshForm.dshProviderKey,
+                    ) && !isProviderKeyLocked
+                  ) &&
+                    (dshForm.dshProviderKey.trim() === "" ||
+                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                        dshForm.dshProviderKey,
+                      )) && (
+                      <p className="text-xs text-muted-foreground">
+                        {isProviderKeyLocked
+                          ? t("dsh.form.providerKeyLockedHint", {
+                              defaultValue:
+                                "该供应商已添加到 DSH 配置中，供应商标识不可修改",
+                            })
+                          : t("dsh.form.providerKeyHint", {
+                              defaultValue:
+                                "仅限小写字母、数字和连字符，将用作 DSH 配置中的供应商名称。",
+                            })}
+                      </p>
+                    )}
+                </div>
               ) : undefined
             }
           />
@@ -2391,6 +2578,25 @@ function ProviderFormFull({
             />
           )}
 
+          {/* DSH 专属字段 */}
+          {appId === "dsh" && (
+            <DshFormFields
+              baseUrl={dshForm.dshBaseUrl}
+              onBaseUrlChange={dshForm.handleDshBaseUrlChange}
+              apiKey={dshForm.dshApiKey}
+              onApiKeyChange={dshForm.handleDshApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowDshApiKeyLink}
+              websiteUrl={dshWebsiteUrl}
+              isPartner={isDshPartner}
+              partnerPromotionKey={dshPartnerPromotionKey}
+              api={dshForm.dshApi}
+              onApiChange={dshForm.handleDshApiChange}
+              models={dshForm.dshModels}
+              onModelsChange={dshForm.handleDshModelsChange}
+            />
+          )}
+
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {appId === "codex" ? (
             <>
@@ -2484,7 +2690,7 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
+          ) : appId === "openclaw" || appId === "hermes" || appId === "dsh" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -2500,7 +2706,14 @@ function ProviderFormFull({
   "base_url": "https://api.example.com/v1",
   "api_key": ""
 }`
-                      : `{
+                      : appId === "dsh"
+                        ? `{
+  "api": "openai-completions",
+  "baseURL": "https://api.deepseek.com",
+  "apiKey": "",
+  "models": []
+}`
+                        : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",
@@ -2548,7 +2761,8 @@ function ProviderFormFull({
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
-            appId !== "hermes" && (
+            appId !== "hermes" &&
+            appId !== "dsh" && (
               <ProviderAdvancedConfig
                 testConfig={testConfig}
                 pricingConfig={pricingConfig}
@@ -2644,6 +2858,6 @@ export type ProviderFormValues = ProviderFormData & {
   presetCategory?: ProviderCategory;
   isPartner?: boolean;
   meta?: ProviderMeta;
-  providerKey?: string; // OpenCode/OpenClaw: user-defined provider key
+  providerKey?: string; // OpenCode/OpenClaw/Hermes/DSH: user-defined provider key
   suggestedDefaults?: OpenClawSuggestedDefaults; // OpenClaw: suggested default model configuration
 };

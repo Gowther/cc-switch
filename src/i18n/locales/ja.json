@@ -777,12 +777,15 @@
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
+    "dshConfigDir": "DSH 設定ディレクトリ",
+    "dshConfigDirDescription": "DSH (DeepSeek Harness) の設定ディレクトリを上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
+    "browsePlaceholderDsh": "例: /home/<your-username>/.dsh",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -892,7 +895,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "dsh": "DSH"
   },
   "sessionManager": {
     "title": "セッション管理",
@@ -1721,7 +1725,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "dsh": "DSH"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -2137,6 +2142,33 @@
       "loadFailed": "記憶ファイルの読み込みに失敗しました",
       "openConfig": "Hermes Web UI で上限を調整",
       "runtimeNote": "変更は Hermes の再起動または新規セッション時に反映されます。"
+    }
+  },
+  "dsh": {
+    "form": {
+      "baseUrl": "API エンドポイント",
+      "baseUrlHint": "プロバイダーの API エンドポイント URL。",
+      "providerKey": "プロバイダーキー",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "小文字、数字、ハイフンのみ。DSH 設定のプロバイダー名として使用されます。",
+      "providerKeyLockedHint": "このプロバイダーは DSH 設定に追加済みのため、キーは変更できません。",
+      "providerKeyRequired": "プロバイダーキーは必須です",
+      "providerKeyInvalid": "プロバイダーキーは小文字、数字、ハイフンのみ使用できます",
+      "providerKeyDuplicate": "このプロバイダーキーは既に存在します",
+      "api": "API モード",
+      "apiHint": "プロバイダーの API プロトコル。エンドポイントに合わせて正しい形式を選択してください。",
+      "apiOpenaiCompletions": "OpenAI Chat Completions",
+      "apiOpenaiResponses": "OpenAI Responses",
+      "apiAnthropicMessages": "Anthropic Messages",
+      "baseUrlRequired": "API エンドポイントは必須です",
+      "baseUrlScheme": "http:// または https:// で始まるアドレスを指定してください",
+      "baseUrlInvalid": "API エンドポイントは有効な URL ではありません",
+      "models": "モデル一覧",
+      "addModel": "モデルを追加",
+      "noModels": "モデルが設定されていません。",
+      "modelId": "モデル ID",
+      "modelIdPlaceholder": "deepseek-chat",
+      "modelsHint": "このプロバイダーで利用可能なモデル一覧。任意のモデル属性（input、reasoningEfforts など）は下の JSON で編集できます。"
     }
   },
   "env": {

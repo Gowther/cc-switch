@@ -178,6 +178,12 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // dsh (settings.yaml, llm-pi-ai.providers) uses native dsh field names
+            // (`baseURL`, `apiKey`) at the top level of settings_config.
+            AppType::Dsh => (
+                str_at(settings.get("baseURL")),
+                str_at(settings.get("apiKey")),
+            ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode => {
                 let options = settings.get("options");

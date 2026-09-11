@@ -44,6 +44,8 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Dsh => crate::dsh_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -202,7 +204,21 @@ pub(crate) fn common_config_snippet_has_content(
             let (env, config) = parse_gemini_common_config(trimmed)?;
             Ok(json_object_has_content(&env) || json_object_has_content(&config))
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+        AppType::Dsh => {
+            // dsh 的通用配置片段是 YAML 文本，顶层必须是 mapping
+            let mapping = crate::dsh_config::parse_common_config_snippet(trimmed).map_err(|e| {
+                AppError::localized(
+                    "dsh_common_config_invalid",
+                    format!("无效的 dsh 通用配置: {e}"),
+                    format!("Invalid dsh common config: {e}"),
+                )
+            })?;
+            Ok(!mapping.is_empty())
+        }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => {
             Ok(false)
         }
     }
@@ -453,6 +469,11 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
                         .get("config")
                         .is_some_and(|target| json_is_subset(target, &config_source)))
         }
+        AppType::Dsh => {
+            // dsh 的通用配置应用在全局 settings.yaml（而非单个 provider 的
+            // settings_config），因此"是否已包含"直接查 live 文件
+            crate::dsh_config::dsh_common_config_applied(trimmed)
+        }
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
     }
 }
@@ -529,6 +550,13 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
+        AppType::Dsh => {
+            // dsh 的通用配置是全局 settings.yaml 的 YAML 片段，从不嵌入单个
+            // provider 的 settings_config，因此"从 provider settings 剥离
+            // snippet"对 dsh 是 no-op（对齐其他 additive 应用）。live 文件侧
+            // 的移除由 set_common_config_snippet 命令的 dsh 分支承担。
+            Ok(settings.clone())
+        }
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
             Ok(settings.clone())
         }
@@ -593,6 +621,13 @@ fn apply_common_config_to_settings(
                 }
             }
             Ok(result)
+        }
+        AppType::Dsh => {
+            // dsh 的通用配置是全局 settings.yaml 的 YAML 片段，直接深合并进
+            // live 文件（llm-pi-ai / agent-default-model 保护键由 dsh_config
+            // 内部跳过）；provider 的 settings_config 本身不变。
+            crate::dsh_config::apply_dsh_common_config(trimmed)?;
+            Ok(settings.clone())
         }
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
             Ok(settings.clone())
@@ -1011,6 +1046,14 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Dsh => {
+            // dsh uses additive mode - upsert provider into settings.yaml 的
+            // llm-pi-ai.providers（apiKey 由 dsh_config 拆到 .credentials.yaml）。
+            // "当前供应商"语义由 switch 流程里的 set_default_model 钩子承担
+            // （对齐 hermes 的 apply_switch_defaults），此处只写 providers 表。
+            crate::dsh_config::set_provider(&provider.id, provider.settings_config.clone())?;
+            log::debug!("dsh provider '{}' written to live config", provider.id);
+        }
     }
     Ok(())
 }
@@ -1268,6 +1311,30 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Dsh => {
+            let settings_path = crate::dsh_config::get_dsh_settings_path();
+            if !settings_path.exists() {
+                return Err(AppError::localized(
+                    "dsh.config.missing",
+                    "dsh 配置文件不存在",
+                    "dsh configuration file not found",
+                ));
+            }
+            let yaml_config = crate::dsh_config::read_dsh_settings()?;
+            let mut config = crate::dsh_config::yaml_to_json(&yaml_config)?;
+            // settings.yaml 只存 apiKeyEnv，密钥在 .credentials.yaml；用物化
+            // apiKey 后的 providers 覆盖，编辑表单读回时才能看到密钥。
+            let providers = crate::dsh_config::get_providers()?;
+            if !providers.is_empty() {
+                if let Some(obj) = config.as_object_mut() {
+                    let llm = obj.entry("llm-pi-ai".to_string()).or_insert_with(|| json!({}));
+                    if let Some(llm_obj) = llm.as_object_mut() {
+                        llm_obj.insert("providers".to_string(), Value::Object(providers));
+                    }
+                }
+            }
+            Ok(config)
+        }
     }
 }
 
@@ -1361,8 +1428,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        // OpenCode, OpenClaw, Hermes and dsh use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Dsh => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1772,6 +1839,100 @@ pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppErro
 
     hermes_config::remove_provider(provider_id)?;
     log::info!("Hermes provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Import all providers from dsh live config to database
+///
+/// This imports existing providers from ~/.dsh/settings.yaml（`llm-pi-ai.providers`）
+/// into the CC Switch database. Each provider found will be added to the
+/// database with is_current set to false. `get_providers` 已从
+/// .credentials.yaml 物化 apiKey，导入的 settings_config 与写入方向
+/// （set_provider 拆分 apiKey/apiKeyEnv）保持 round-trip 一致。
+pub fn import_dsh_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::dsh_config;
+
+    let providers = dsh_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("dsh")?;
+
+    for (key, config) in providers {
+        // Validate: skip entries with empty key
+        if key.trim().is_empty() {
+            log::warn!("Skipping dsh provider with empty key");
+            continue;
+        }
+
+        if existing_ids.contains(&key) {
+            match state.db.get_provider_by_id(&key, "dsh") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != config {
+                        let mut provider = existing;
+                        provider.settings_config = config;
+                        if let Err(e) = state.db.save_provider("dsh", &provider) {
+                            log::warn!(
+                                "Failed to update dsh provider '{key}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated dsh provider '{key}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("dsh provider '{key}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up dsh provider '{key}': {e}"),
+            }
+            continue;
+        }
+
+        // Create provider（显示名取 dsh 的 displayName，缺省回退为路由键）
+        let display_name = config
+            .get("displayName")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| key.clone());
+        let mut provider = Provider::with_id(key.clone(), display_name, config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        // Save to database
+        if let Err(e) = state.db.save_provider("dsh", &provider) {
+            log::warn!("Failed to import dsh provider '{key}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported dsh provider '{key}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// Remove a dsh provider from live config
+///
+/// This removes a specific provider from ~/.dsh/settings.yaml（连同无其他
+/// 引用的 apiKeyEnv 凭据条目）without affecting other providers in the file.
+pub fn remove_dsh_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    // Check if dsh config directory exists
+    if !crate::settings::get_dsh_dir().exists() {
+        log::debug!("dsh config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    crate::dsh_config::remove_provider(provider_id)?;
+    log::info!("dsh provider '{provider_id}' removed from live config");
 
     Ok(())
 }
