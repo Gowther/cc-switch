@@ -265,9 +265,10 @@ fn upsert_managed_item(entries: &mut Vec<serde_yaml::Value>, item: serde_yaml::V
         }
     }
 
-    let entry = serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([
-        (yaml_str("insert"), serde_yaml::Value::Sequence(vec![item])),
-    ]));
+    let entry = serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([(
+        yaml_str("insert"),
+        serde_yaml::Value::Sequence(vec![item]),
+    )]));
     entries.push(entry);
 }
 // ============================================================================
@@ -352,7 +353,10 @@ fn build_insert_item(server_name: &str, spec: &Value) -> Result<serde_yaml::Valu
     }
 
     let item = serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([
-        (yaml_str("id"), yaml_str(&format!("{MANAGED_ID_PREFIX}{server_name}"))),
+        (
+            yaml_str("id"),
+            yaml_str(&format!("{MANAGED_ID_PREFIX}{server_name}")),
+        ),
         (yaml_str("name"), yaml_str(MCP_CLIENT_PLUGIN)),
         (yaml_str("config"), serde_yaml::Value::Mapping(config)),
     ]));
@@ -775,7 +779,9 @@ mod tests {
         let name = sanitize_server_name("foo.bar baz");
         assert!(name.starts_with("foo-bar-baz-"), "got: {name}");
         assert!(name.len() <= SERVER_NAME_MAX_LEN);
-        assert!(name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+        assert!(name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
     }
 
     #[test]
@@ -794,11 +800,20 @@ mod tests {
 
     #[test]
     fn sanitize_is_deterministic_and_disambiguates_collisions() {
-        assert_eq!(sanitize_server_name("foo.bar"), sanitize_server_name("foo.bar"));
+        assert_eq!(
+            sanitize_server_name("foo.bar"),
+            sanitize_server_name("foo.bar")
+        );
         // 两个折叠后同名的 id 必须因哈希后缀而不同
-        assert_ne!(sanitize_server_name("foo.bar"), sanitize_server_name("foo bar"));
+        assert_ne!(
+            sanitize_server_name("foo.bar"),
+            sanitize_server_name("foo bar")
+        );
         // 干净 id 不带哈希后缀，与脏 id 不冲突
-        assert_ne!(sanitize_server_name("foo-bar"), sanitize_server_name("foo.bar"));
+        assert_ne!(
+            sanitize_server_name("foo-bar"),
+            sanitize_server_name("foo.bar")
+        );
     }
 
     // ========================================================================
@@ -837,7 +852,12 @@ mod tests {
             assert_eq!(config.get("command").unwrap().as_str(), Some("npx"));
             assert_eq!(config.get("args").unwrap().as_sequence().unwrap().len(), 2);
             assert_eq!(
-                config.get("env").unwrap().get("GITHUB_TOKEN").unwrap().as_str(),
+                config
+                    .get("env")
+                    .unwrap()
+                    .get("GITHUB_TOKEN")
+                    .unwrap()
+                    .as_str(),
                 Some("token")
             );
         });
@@ -861,10 +881,21 @@ mod tests {
             assert_eq!(seq.len(), 1);
             let item = seq[0].get("insert").unwrap().as_sequence().unwrap()[0].clone();
             let config = item.get("config").unwrap().clone();
-            assert_eq!(config.get("transport").unwrap().as_str(), Some("streamable-http"));
-            assert_eq!(config.get("url").unwrap().as_str(), Some("https://example.com/mcp"));
             assert_eq!(
-                config.get("headers").unwrap().get("Authorization").unwrap().as_str(),
+                config.get("transport").unwrap().as_str(),
+                Some("streamable-http")
+            );
+            assert_eq!(
+                config.get("url").unwrap().as_str(),
+                Some("https://example.com/mcp")
+            );
+            assert_eq!(
+                config
+                    .get("headers")
+                    .unwrap()
+                    .get("Authorization")
+                    .unwrap()
+                    .as_str(),
                 Some("Bearer xxx")
             );
         });
@@ -943,7 +974,10 @@ mod tests {
                 .filter_map(|item| item.get("id"))
                 .filter_map(|id| id.as_str())
                 .collect();
-            assert!(!ids.contains(&"mcp-old"), "stale managed entry must go: {ids:?}");
+            assert!(
+                !ids.contains(&"mcp-old"),
+                "stale managed entry must go: {ids:?}"
+            );
             assert!(ids.contains(&"mcp-github"));
             assert!(ids.contains(&"mcp-web"));
             assert!(!ids.contains(&"mcp-disabled-one"));
@@ -1138,8 +1172,11 @@ mod tests {
 
             // 统一注册表里已有同名 server（其他应用启用中）
             let mut config = MultiAppConfig::default();
-            let (_, existing) =
-                make_server("github", json!({ "type": "stdio", "command": "npx" }), false);
+            let (_, existing) = make_server(
+                "github",
+                json!({ "type": "stdio", "command": "npx" }),
+                false,
+            );
             config
                 .mcp
                 .servers

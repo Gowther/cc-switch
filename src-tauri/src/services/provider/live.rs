@@ -44,8 +44,9 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
-        AppType::Dsh => crate::dsh_config::get_providers()
-            .map(|providers| providers.contains_key(provider_id)),
+        AppType::Dsh => {
+            crate::dsh_config::get_providers().map(|providers| providers.contains_key(provider_id))
+        }
         _ => Ok(false),
     }
 }
@@ -215,10 +216,7 @@ pub(crate) fn common_config_snippet_has_content(
             })?;
             Ok(!mapping.is_empty())
         }
-        AppType::OpenCode
-        | AppType::OpenClaw
-        | AppType::Hermes
-        | AppType::ClaudeDesktop => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
             Ok(false)
         }
     }

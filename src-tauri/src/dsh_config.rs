@@ -241,9 +241,7 @@ fn cleanup_dsh_backups(dir: &Path, kind: &str) -> Result<(), AppError> {
 /// 取 settings.yaml 顶层的可变 Mapping；Null 归一化为空 Mapping。
 /// 顶层是其他非标量类型（配置已损坏，dsh 自身也无法加载）时报 Config
 /// 错误而不是覆盖，避免误毁用户数据。
-fn settings_root_mut(
-    value: &mut serde_yaml::Value,
-) -> Result<&mut serde_yaml::Mapping, AppError> {
+fn settings_root_mut(value: &mut serde_yaml::Value) -> Result<&mut serde_yaml::Mapping, AppError> {
     if value.is_null() {
         *value = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
     }
@@ -298,7 +296,9 @@ fn read_credentials_doc() -> Result<serde_yaml::Mapping, AppError> {
     }
 
     let value: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|e| {
-        AppError::Config(format!("Failed to parse dsh .credentials.yaml as YAML: {e}"))
+        AppError::Config(format!(
+            "Failed to parse dsh .credentials.yaml as YAML: {e}"
+        ))
     })?;
     match value {
         serde_yaml::Value::Mapping(mapping) => Ok(mapping),
@@ -894,7 +894,10 @@ pub fn validate_dsh_provider_config(config: &serde_json::Value) -> Result<(), Ap
     })?;
 
     if let Some(api) = obj.get("api") {
-        let valid = api.as_str().map(|s| ALLOWED_APIS.contains(&s)).unwrap_or(false);
+        let valid = api
+            .as_str()
+            .map(|s| ALLOWED_APIS.contains(&s))
+            .unwrap_or(false);
         if !valid {
             return Err(AppError::localized(
                 "provider.dsh.invalidApi",
@@ -1023,7 +1026,10 @@ mod tests {
 
     #[test]
     fn api_key_env_name_from_plain_key() {
-        assert_eq!(generate_api_key_env_name("deepseek"), "DSH_DEEPSEEK_API_KEY");
+        assert_eq!(
+            generate_api_key_env_name("deepseek"),
+            "DSH_DEEPSEEK_API_KEY"
+        );
     }
 
     #[test]
@@ -1044,7 +1050,10 @@ mod tests {
 
     #[test]
     fn api_key_env_name_keeps_uppercase_and_digits() {
-        assert_eq!(generate_api_key_env_name("ALREADY2"), "DSH_ALREADY2_API_KEY");
+        assert_eq!(
+            generate_api_key_env_name("ALREADY2"),
+            "DSH_ALREADY2_API_KEY"
+        );
     }
 
     // ---- provider CRUD + credentials split ----
@@ -1407,10 +1416,7 @@ ui:
             let settings = read_dsh_settings().unwrap();
             let agent = settings.get("agent").unwrap();
             assert_eq!(agent.get("max_turns").and_then(|v| v.as_u64()), Some(5));
-            assert_eq!(
-                agent.get("temperature").and_then(|v| v.as_f64()),
-                Some(0.5)
-            );
+            assert_eq!(agent.get("temperature").and_then(|v| v.as_f64()), Some(0.5));
         });
     }
 
@@ -1496,7 +1502,9 @@ telemetry:
     fn common_config_snippet_must_be_mapping() {
         assert!(parse_common_config_snippet("- a\n- b\n").is_err());
         assert!(parse_common_config_snippet("").unwrap().is_empty());
-        assert!(parse_common_config_snippet("# comment\n").unwrap().is_empty());
+        assert!(parse_common_config_snippet("# comment\n")
+            .unwrap()
+            .is_empty());
     }
 
     // ---- credentials file ----

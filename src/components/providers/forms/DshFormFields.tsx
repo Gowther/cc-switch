@@ -182,10 +182,7 @@ export function DshFormFields({
         <FormLabel htmlFor="dsh-api-mode">
           {t("dsh.form.api", { defaultValue: "API 模式" })}
         </FormLabel>
-        <Select
-          value={api}
-          onValueChange={(v) => onApiChange(v as DshApiMode)}
-        >
+        <Select value={api} onValueChange={(v) => onApiChange(v as DshApiMode)}>
           <SelectTrigger id="dsh-api-mode">
             <SelectValue />
           </SelectTrigger>

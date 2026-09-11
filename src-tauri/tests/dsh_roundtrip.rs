@@ -267,8 +267,7 @@ fn sync_single_stdio_server_writes_insert_entry_and_is_idempotent() {
         let first = std::fs::read_to_string(&patch_path).expect("read cordis.patch.yml");
 
         // 再 sync 一次：幂等，不产生重复条目、文件内容不变
-        sync_single_server_to_dsh(&MultiAppConfig::default(), "github", &spec)
-            .expect("sync again");
+        sync_single_server_to_dsh(&MultiAppConfig::default(), "github", &spec).expect("sync again");
         assert_eq!(
             first,
             std::fs::read_to_string(&patch_path).expect("read cordis.patch.yml again"),
@@ -294,10 +293,7 @@ fn sync_single_stdio_server_writes_insert_entry_and_is_idempotent() {
             config.get("transport").and_then(|v| v.as_str()),
             Some("stdio")
         );
-        assert_eq!(
-            config.get("command").and_then(|v| v.as_str()),
-            Some("npx")
-        );
+        assert_eq!(config.get("command").and_then(|v| v.as_str()), Some("npx"));
         assert_eq!(
             config
                 .get("args")

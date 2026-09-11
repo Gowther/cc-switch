@@ -390,7 +390,11 @@ pub async fn set_common_config_snippet(
 
     validate_common_config_snippet(&app_type, &snippet)?;
 
-    let value = if is_cleared { None } else { Some(snippet.clone()) };
+    let value = if is_cleared {
+        None
+    } else {
+        Some(snippet.clone())
+    };
 
     if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
         if let Some(legacy_snippet) = old_snippet
