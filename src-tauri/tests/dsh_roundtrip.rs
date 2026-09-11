@@ -345,21 +345,13 @@ fn sync_preserves_user_tagged_entry_and_remove_deletes_only_managed() {
         let seq = yaml.as_sequence().expect("patch entries list");
         assert_eq!(seq.len(), 2, "user entry kept + managed entry added");
 
-        // 用户自有条目保留，!!js 值仍为 Tagged（不被硬转成字符串）
-        let manual = seq
-            .iter()
-            .filter_map(|entry| entry.get("insert").and_then(|v| v.as_sequence()))
-            .flatten()
-            .find(|item| item.get("id").and_then(|v| v.as_str()) == Some("my-manual"))
-            .expect("user entry must be preserved");
-        let tagged = manual
-            .get("config")
-            .and_then(|c| c.get("env"))
-            .and_then(|e| e.get("GITHUB_TOKEN"))
-            .expect("tagged env value");
+        // 用户自有条目逐字保留：!!js 标签行在文本层原样存在。
+        // （serde_yaml 在 Value 层会丢标签，实现按文本块直传用户条目，
+        // 不做 Value 往返，因此断言原文而非解析结果）
+        let raw = std::fs::read_to_string(&patch_path).expect("read patch file");
         assert!(
-            matches!(tagged, serde_yaml::Value::Tagged(_)),
-            "!!js value must survive as a tagged value, got: {tagged:?}"
+            raw.contains("GITHUB_TOKEN: !!js process.env.GITHUB_TOKEN"),
+            "!!js tagged line must survive verbatim, got:\n{raw}"
         );
 
         // remove：只删 cc-switch 管理的条目，用户自有条目原样保留
@@ -378,19 +370,9 @@ fn sync_preserves_user_tagged_entry_and_remove_deletes_only_managed() {
             "only the managed entry must be removed"
         );
 
-        // 再确认 Tagged 值在写回后仍未被降级
-        let manual = seq
-            .iter()
-            .filter_map(|entry| entry.get("insert").and_then(|v| v.as_sequence()))
-            .flatten()
-            .find(|item| item.get("id").and_then(|v| v.as_str()) == Some("my-manual"))
-            .expect("user entry must still be present");
-        let tagged = manual
-            .get("config")
-            .and_then(|c| c.get("env"))
-            .and_then(|e| e.get("GITHUB_TOKEN"))
-            .expect("tagged env value");
-        assert!(matches!(tagged, serde_yaml::Value::Tagged(_)));
+        // 再确认 !!js 行在写回后仍逐字保留
+        let raw = std::fs::read_to_string(&patch_path).expect("read patch file");
+        assert!(raw.contains("GITHUB_TOKEN: !!js process.env.GITHUB_TOKEN"));
     });
 }
 
