@@ -318,9 +318,7 @@ fn block_fully_matches(block_text: &str, predicate: &dyn Fn(&serde_yaml::Value) 
     let Some(items) = entry.get("insert").and_then(|v| v.as_sequence()) else {
         return false;
     };
-    !items.is_empty()
-        && items.iter().all(is_mcp_client_item)
-        && items.iter().any(|item| predicate(item))
+    !items.is_empty() && items.iter().all(is_mcp_client_item) && items.iter().any(predicate)
 }
 
 /// 块内有命中谓词的 mcp 项，但混入其他插件项（或形态不纯）——文本级无法
