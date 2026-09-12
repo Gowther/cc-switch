@@ -317,6 +317,8 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
                         gemini: false,
                         opencode: false,
                         hermes: true,
+                        dsh: false,
+                        zcode: false,
                     },
                     description: None,
                     homepage: None,

@@ -420,7 +420,9 @@ describe("useSettings hook", () => {
     });
 
     // 修复生效：读的是缓存实时值 true，payload=false，差异触发 clear_claude_config
-    expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({ official: true });
+    expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({
+      official: true,
+    });
     expect(syncCurrentProvidersLiveMock).toHaveBeenCalled();
   });
 
@@ -462,6 +464,8 @@ describe("useSettings hook", () => {
       opencode: "/server/opencode",
       openclaw: "/server/openclaw",
       hermes: undefined,
+      dsh: undefined,
+      zcode: undefined,
     });
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
   });

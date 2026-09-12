@@ -168,6 +168,168 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
 }
 
 #[test]
+fn sync_to_dsh_uses_dsh_skills_dir_and_removes_disabled_entries() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    // 中和 DSH_HOME：dsh skills 目录解析为 <dsh_dir>/skills，必须落在测试 HOME 下，
+    // 绝不触碰真实 ~/.dsh/skills。
+    let old_dsh_home = std::env::var_os("DSH_HOME");
+    std::env::remove_var("DSH_HOME");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let ssot_dir = home.join(".cc-switch").join("skills");
+        let enabled_skill = ssot_dir.join("dsh-enabled-skill");
+        let disabled_skill = ssot_dir.join("dsh-disabled-skill");
+        write_skill(&enabled_skill, "Dsh Enabled");
+        write_skill(&disabled_skill, "Dsh Disabled");
+
+        // dsh 的 skills 目标目录 = <dsh_dir>/skills（默认 <home>/.dsh/skills）
+        let dsh_skills_dir = home.join(".dsh").join("skills");
+        fs::create_dir_all(&dsh_skills_dir).expect("create dsh skills dir");
+        symlink_dir(&disabled_skill, &dsh_skills_dir.join("dsh-disabled-skill"));
+
+        let state = create_test_state().expect("create test state");
+        state
+            .db
+            .save_skill(&InstalledSkill {
+                id: "local:dsh-enabled-skill".to_string(),
+                name: "Dsh Enabled".to_string(),
+                description: None,
+                directory: "dsh-enabled-skill".to_string(),
+                repo_owner: None,
+                repo_name: None,
+                repo_branch: None,
+                readme_url: None,
+                apps: SkillApps {
+                    dsh: true,
+                    ..Default::default()
+                },
+                installed_at: 0,
+                content_hash: None,
+                updated_at: 0,
+            })
+            .expect("save dsh-enabled skill");
+        state
+            .db
+            .save_skill(&InstalledSkill {
+                id: "local:dsh-disabled-skill".to_string(),
+                name: "Dsh Disabled".to_string(),
+                description: None,
+                directory: "dsh-disabled-skill".to_string(),
+                repo_owner: None,
+                repo_name: None,
+                repo_branch: None,
+                readme_url: None,
+                apps: SkillApps::default(),
+                installed_at: 0,
+                content_hash: None,
+                updated_at: 0,
+            })
+            .expect("save dsh-disabled skill");
+
+        SkillService::sync_to_app(&state.db, &AppType::Dsh).expect("reconcile dsh skills");
+
+        assert!(
+            dsh_skills_dir
+                .join("dsh-enabled-skill")
+                .join("SKILL.md")
+                .exists(),
+            "dsh-enabled skill should be synced into <dsh_dir>/skills"
+        );
+        assert!(
+            !dsh_skills_dir.join("dsh-disabled-skill").exists(),
+            "DB-known disabled skill should be removed from dsh live dir"
+        );
+    }));
+
+    match old_dsh_home {
+        Some(value) => std::env::set_var("DSH_HOME", value),
+        None => std::env::remove_var("DSH_HOME"),
+    }
+    if let Err(err) = result {
+        std::panic::resume_unwind(err);
+    }
+}
+
+#[test]
+fn sync_to_zcode_uses_zcode_skills_dir_and_removes_disabled_entries() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    // zcode 无环境变量覆盖层（与 dsh 的 DSH_HOME 不同），目录解析为
+    // <zcode_dir>/skills = 测试 HOME 下的 .zcode/skills，无需额外中和。
+
+    let ssot_dir = home.join(".cc-switch").join("skills");
+    let enabled_skill = ssot_dir.join("zcode-enabled-skill");
+    let disabled_skill = ssot_dir.join("zcode-disabled-skill");
+    write_skill(&enabled_skill, "Zcode Enabled");
+    write_skill(&disabled_skill, "Zcode Disabled");
+
+    let zcode_skills_dir = home.join(".zcode").join("skills");
+    fs::create_dir_all(&zcode_skills_dir).expect("create zcode skills dir");
+    symlink_dir(
+        &disabled_skill,
+        &zcode_skills_dir.join("zcode-disabled-skill"),
+    );
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:zcode-enabled-skill".to_string(),
+            name: "Zcode Enabled".to_string(),
+            description: None,
+            directory: "zcode-enabled-skill".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                zcode: true,
+                ..Default::default()
+            },
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+        })
+        .expect("save zcode-enabled skill");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:zcode-disabled-skill".to_string(),
+            name: "Zcode Disabled".to_string(),
+            description: None,
+            directory: "zcode-disabled-skill".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps::default(),
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+        })
+        .expect("save zcode-disabled skill");
+
+    SkillService::sync_to_app(&state.db, &AppType::Zcode).expect("reconcile zcode skills");
+
+    assert!(
+        zcode_skills_dir
+            .join("zcode-enabled-skill")
+            .join("SKILL.md")
+            .exists(),
+        "zcode-enabled skill should be synced into <zcode_dir>/skills"
+    );
+    assert!(
+        !zcode_skills_dir.join("zcode-disabled-skill").exists(),
+        "DB-known disabled skill should be removed from zcode live dir"
+    );
+}
+
+#[test]
 fn uninstall_skill_creates_backup_before_removing_ssot() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

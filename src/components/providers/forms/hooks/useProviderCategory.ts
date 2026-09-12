@@ -7,6 +7,8 @@ import { geminiProviderPresets } from "@/config/geminiProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
 import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { hermesProviderPresets } from "@/config/hermesProviderPresets";
+import { dshProviderPresets } from "@/config/dshProviderPresets";
+import { zcodeProviderPresets } from "@/config/zcodeProviderPresets";
 
 interface UseProviderCategoryProps {
   appId: AppId;
@@ -46,7 +48,7 @@ export function useProviderCategory({
 
     // 从预设 ID 提取索引
     const match = selectedPresetId.match(
-      /^(claude|codex|gemini|opencode|openclaw|hermes)-(\d+)$/,
+      /^(claude|codex|gemini|opencode|openclaw|hermes|dsh|zcode)-(\d+)$/,
     );
     if (!match) return;
 
@@ -84,6 +86,16 @@ export function useProviderCategory({
       }
     } else if (type === "hermes" && appId === "hermes") {
       const preset = hermesProviderPresets[index];
+      if (preset) {
+        setCategory(preset.category || undefined);
+      }
+    } else if (type === "dsh" && appId === "dsh") {
+      const preset = dshProviderPresets[index];
+      if (preset) {
+        setCategory(preset.category || undefined);
+      }
+    } else if (type === "zcode" && appId === "zcode") {
+      const preset = zcodeProviderPresets[index];
       if (preset) {
         setCategory(preset.category || undefined);
       }

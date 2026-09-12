@@ -300,6 +300,8 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             gemini: false,
                             opencode: false,
                             hermes: false,
+                            dsh: false,
+                            zcode: false,
                         },
                         description: None,
                         homepage: None,

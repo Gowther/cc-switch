@@ -302,6 +302,8 @@ command = "say"
                 gemini: false,
                 opencode: false,
                 hermes: false,
+                dsh: false,
+                zcode: false,
             },
             description: None,
             homepage: None,

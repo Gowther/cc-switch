@@ -20,6 +20,8 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
+  dshDir?: string;
+  zcodeDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -37,6 +39,8 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
+  dshDir,
+  zcodeDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -157,6 +161,28 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("hermes", val)}
           onBrowse={() => onBrowseDirectory("hermes")}
           onReset={() => onResetDirectory("hermes")}
+        />
+
+        <DirectoryInput
+          label={t("settings.dshConfigDir")}
+          description={undefined}
+          value={dshDir}
+          resolvedValue={resolvedDirs.dsh}
+          placeholder={t("settings.browsePlaceholderDsh")}
+          onChange={(val) => onDirectoryChange("dsh", val)}
+          onBrowse={() => onBrowseDirectory("dsh")}
+          onReset={() => onResetDirectory("dsh")}
+        />
+
+        <DirectoryInput
+          label={t("settings.zcodeConfigDir")}
+          description={undefined}
+          value={zcodeDir}
+          resolvedValue={resolvedDirs.zcode}
+          placeholder={t("settings.browsePlaceholderZcode")}
+          onChange={(val) => onDirectoryChange("zcode", val)}
+          onBrowse={() => onBrowseDirectory("zcode")}
+          onReset={() => onResetDirectory("zcode")}
         />
       </section>
     </div>

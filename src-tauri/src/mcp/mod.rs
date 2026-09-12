@@ -10,13 +10,17 @@
 //! - `gemini` - Gemini MCP 同步和导入
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
+//! - `dsh` - dsh MCP 同步和导入（cordis.patch.yml insert 条目）
+//! - `zcode` - zcode MCP 同步和导入（cli/config.json 的 mcp.servers）
 
 mod claude;
 mod codex;
+mod dsh;
 mod gemini;
 mod hermes;
 mod opencode;
 mod validation;
+mod zcode;
 
 // 重新导出公共 API
 pub use claude::{
@@ -26,6 +30,9 @@ pub use claude::{
 pub use codex::{
     import_from_codex, remove_server_from_codex, sync_enabled_to_codex, sync_single_server_to_codex,
 };
+pub use dsh::{
+    import_from_dsh, remove_server_from_dsh, sync_enabled_to_dsh, sync_single_server_to_dsh,
+};
 pub use gemini::{
     import_from_gemini, remove_server_from_gemini, sync_enabled_to_gemini,
     sync_single_server_to_gemini,
@@ -33,4 +40,7 @@ pub use gemini::{
 pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_server_to_hermes};
 pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
+};
+pub use zcode::{
+    import_from_zcode, remove_server_from_zcode, sync_enabled_to_zcode, sync_single_server_to_zcode,
 };

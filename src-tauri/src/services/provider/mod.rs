@@ -22,10 +22,10 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
-    should_import_default_config_on_startup, sync_current_to_live,
-    update_toml_common_config_snippet,
+    import_default_config, import_dsh_providers_from_live, import_hermes_providers_from_live,
+    import_openclaw_providers_from_live, import_opencode_providers_from_live,
+    import_zcode_providers_from_live, read_live_settings, should_import_default_config_on_startup,
+    sync_current_to_live, update_toml_common_config_snippet,
 };
 
 // Internal re-exports (pub(crate))
@@ -38,8 +38,9 @@ pub(crate) use live::{
 
 // Internal re-exports
 use live::{
-    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_dsh_provider_from_live, remove_hermes_provider_from_live,
+    remove_openclaw_provider_from_live, remove_opencode_provider_from_live,
+    remove_zcode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -220,8 +221,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let old_home = std::env::var_os("HOME");
+        let old_dsh_home = std::env::var_os("DSH_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
+        // 中和 DSH_HOME，避免真实 dsh 安装把 dsh 目录解析到测试 HOME 之外
+        std::env::remove_var("DSH_HOME");
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
@@ -234,6 +238,10 @@ mod tests {
         match old_home {
             Some(value) => std::env::set_var("HOME", value),
             None => std::env::remove_var("HOME"),
+        }
+        match old_dsh_home {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
         }
 
         result
@@ -340,6 +348,52 @@ mod tests {
                         "name": "GPT-4o"
                     }
                 }
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn dsh_provider(id: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            enabled: true,
+            settings_config: json!({
+                "api": "openai-completions",
+                "baseURL": "https://api.example.com/v1",
+                "apiKey": "test-key",
+                "models": [{ "id": "deepseek-chat", "name": "DeepSeek Chat" }],
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn zcode_provider(id: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            enabled: true,
+            settings_config: json!({
+                "kind": "openai-compatible",
+                "baseURL": "https://api.example.com/v1",
+                "apiKey": "test-key",
+                "models": [{ "id": "glm-5.1", "name": "GLM-5.1" }],
             }),
             website_url: None,
             category: Some("custom".to_string()),
@@ -1810,6 +1864,157 @@ url = "https://example.invalid/mcp"
 
     #[test]
     #[serial]
+    fn import_dsh_providers_from_live_marks_provider_as_live_managed() {
+        with_test_home(|state, _| {
+            let provider = dsh_provider("imported-dsh");
+            crate::dsh_config::set_provider(&provider.id, provider.settings_config.clone())
+                .expect("seed dsh live provider");
+
+            let imported =
+                import_dsh_providers_from_live(state).expect("import dsh providers from live");
+            assert_eq!(imported, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::Dsh.as_str())
+                .expect("query imported dsh provider")
+                .expect("imported dsh provider should exist");
+            assert_eq!(
+                saved
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.live_config_managed),
+                Some(true),
+                "providers imported from live should be treated as live-managed"
+            );
+            // apiKey 从 .credentials.yaml 的 refs 物化回来，与写入方向保持 round-trip 一致
+            assert_eq!(saved.settings_config["apiKey"], json!("test-key"));
+            assert_eq!(
+                saved.settings_config["apiKeyEnv"],
+                json!("DSH_IMPORTED_DSH_API_KEY")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_dsh_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let provider = dsh_provider("existing-dsh");
+            state
+                .db
+                .save_provider(AppType::Dsh.as_str(), &provider)
+                .expect("seed existing dsh provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings["baseURL"] = Value::String("https://api.dsh.example/v1".to_string());
+            live_settings["models"][0]["name"] = Value::String("DeepSeek Chat v2".to_string());
+            crate::dsh_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live dsh provider");
+
+            let updated =
+                import_dsh_providers_from_live(state).expect("import dsh providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::Dsh.as_str())
+                .expect("query updated dsh provider")
+                .expect("dsh provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["baseURL"],
+                json!("https://api.dsh.example/v1")
+            );
+            assert_eq!(
+                saved.settings_config["models"][0]["name"],
+                json!("DeepSeek Chat v2")
+            );
+            assert_eq!(
+                saved.settings_config["models"][0]["id"],
+                json!("deepseek-chat")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_zcode_providers_from_live_marks_provider_as_live_managed() {
+        with_test_home(|state, _| {
+            let provider = zcode_provider("imported-zcode");
+            crate::zcode_config::set_provider(&provider.id, provider.settings_config.clone())
+                .expect("seed zcode live provider");
+
+            let imported =
+                import_zcode_providers_from_live(state).expect("import zcode providers from live");
+            assert_eq!(imported, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::Zcode.as_str())
+                .expect("query imported zcode provider")
+                .expect("imported zcode provider should exist");
+            assert_eq!(
+                saved
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.live_config_managed),
+                Some(true),
+                "providers imported from live should be treated as live-managed"
+            );
+            // 原生嵌套形态摊平回扁平 settings_config（apiKey 提升到顶层、
+            // models map 转回数组），与写入方向保持 round-trip 一致
+            assert_eq!(saved.settings_config["apiKey"], json!("test-key"));
+            assert_eq!(saved.settings_config["kind"], json!("openai-compatible"));
+            assert_eq!(
+                saved.settings_config["baseURL"],
+                json!("https://api.example.com/v1")
+            );
+            assert_eq!(saved.settings_config["models"][0]["id"], json!("glm-5.1"));
+            assert!(
+                saved.settings_config.get("options").is_none(),
+                "扁平契约不导出 options 嵌套"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_zcode_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let provider = zcode_provider("existing-zcode");
+            state
+                .db
+                .save_provider(AppType::Zcode.as_str(), &provider)
+                .expect("seed existing zcode provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings["baseURL"] = Value::String("https://api.zcode.example/v1".to_string());
+            live_settings["models"][0]["name"] = Value::String("GLM-5.2".to_string());
+            crate::zcode_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live zcode provider");
+
+            let updated =
+                import_zcode_providers_from_live(state).expect("import zcode providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::Zcode.as_str())
+                .expect("query updated zcode provider")
+                .expect("zcode provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["baseURL"],
+                json!("https://api.zcode.example/v1")
+            );
+            assert_eq!(saved.settings_config["models"][0]["name"], json!("GLM-5.2"));
+            assert_eq!(saved.settings_config["models"][0]["id"], json!("glm-5.1"));
+        });
+    }
+
+    #[test]
+    #[serial]
     fn legacy_additive_provider_still_errors_on_live_config_parse_failure() {
         with_test_home(|state, home| {
             let provider = openclaw_provider("legacy-provider");
@@ -2493,6 +2698,8 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::Dsh => remove_dsh_provider_from_live(id)?,
+                    AppType::Zcode => remove_zcode_provider_from_live(id)?,
                     _ => {}
                 }
             }
@@ -2557,6 +2764,12 @@ impl ProviderService {
             }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
+            }
+            AppType::Dsh => {
+                remove_dsh_provider_from_live(id)?;
+            }
+            AppType::Zcode => {
+                remove_zcode_provider_from_live(id)?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -2663,6 +2876,19 @@ impl ProviderService {
                     "Cannot disable the provider currently in use. Switch to another provider first.",
                 ));
             }
+
+            // dsh：agent-default-model 仍引用该 provider 时禁止禁用（对齐 hermes 守卫）
+            if matches!(app_type, AppType::Dsh)
+                && crate::dsh_config::get_default_model()?
+                    .map(|default| default.provider == id)
+                    .unwrap_or(false)
+            {
+                return Err(AppError::localized(
+                    "provider.disable_current",
+                    "无法禁用当前正在使用的供应商，请先切换到其他供应商。",
+                    "Cannot disable the provider currently in use. Switch to another provider first.",
+                ));
+            }
         }
 
         let restore_to_live = app_type.is_additive_mode()
@@ -2679,6 +2905,8 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::Dsh => remove_dsh_provider_from_live(id)?,
+                    AppType::Zcode => remove_zcode_provider_from_live(id)?,
                     _ => {}
                 }
             }
@@ -2696,6 +2924,8 @@ impl ProviderService {
                         AppType::OpenCode => remove_opencode_provider_from_live(id),
                         AppType::OpenClaw => remove_openclaw_provider_from_live(id),
                         AppType::Hermes => remove_hermes_provider_from_live(id),
+                        AppType::Dsh => remove_dsh_provider_from_live(id),
+                        AppType::Zcode => remove_zcode_provider_from_live(id),
                         _ => Ok(()),
                     }
                 } else {
@@ -2925,6 +3155,21 @@ impl ProviderService {
             }
         }
 
+        // dsh 同为 additive：切换 = 改写 settings.yaml 的 agent-default-model
+        // 分节指向该 provider 的首个模型（provider 无 models 时 dsh_config
+        // 内部跳过写入并告警）。与 hermes 一样降级为 warning，不阻断切换。
+        if matches!(app_type, AppType::Dsh) {
+            if let Err(e) = crate::dsh_config::set_default_model(&provider.id) {
+                log::warn!(
+                    "Failed to update dsh agent-default-model after switching to '{}': {e}",
+                    provider.id
+                );
+                result
+                    .warnings
+                    .push(format!("dsh_default_model_failed:{}", provider.id));
+            }
+        }
+
         // For additive-mode providers that were DB-only (live_config_managed == Some(false)),
         // flip the flag to true now that the provider has been successfully written to the live
         // file. This ensures sync_all_providers_to_live() will include it on future syncs.
@@ -2940,6 +3185,8 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                    AppType::Dsh => remove_dsh_provider_from_live(&provider.id),
+                    AppType::Zcode => remove_zcode_provider_from_live(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -3295,6 +3542,10 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            // dsh 的通用配置是全局 YAML 片段，不从单个 provider settings 提取
+            AppType::Dsh => Ok(String::new()),
+            // zcode 的通用配置是全局 JSON 片段（cli/config.json），不从单个 provider settings 提取
+            AppType::Zcode => Ok(String::new()),
         }
     }
 
@@ -3311,6 +3562,10 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            // dsh 的通用配置是全局 YAML 片段，不从单个 provider settings 提取
+            AppType::Dsh => Ok(String::new()),
+            // zcode 的通用配置是全局 JSON 片段（cli/config.json），不从单个 provider settings 提取
+            AppType::Zcode => Ok(String::new()),
         }
     }
 
@@ -3878,6 +4133,17 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Dsh => {
+                // dsh: 对齐 dsh 对 catalog 未知自定义路由的硬性要求
+                // （api 三枚举 / baseURL 非空 / models 非空且元素有 id）
+                crate::dsh_config::validate_dsh_provider_config(&provider.settings_config)?;
+            }
+            AppType::Zcode => {
+                // zcode: kind 必填且必须在三枚举内（非法 kind 会让 ZCode
+                // safeParse 失败并清空整个 provider 配置）+ baseURL 非空 +
+                // models 元素需非空 id
+                crate::zcode_config::validate_zcode_provider_config(&provider.settings_config)?;
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -4078,6 +4344,59 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Dsh => {
+                // dsh keeps native settings.yaml field names in settings_config
+                // (`apiKey`, `baseURL`).
+                let api_key = provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.dsh.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("baseURL")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Zcode => {
+                // zcode 的 settings_config 是扁平契约（`apiKey`/`baseURL` 顶层），
+                // 兜底兼容 zcode 原生 `options` 嵌套形态。
+                let settings = &provider.settings_config;
+                let options = settings.get("options");
+
+                let api_key = settings
+                    .get("apiKey")
+                    .or_else(|| options.and_then(|o| o.get("apiKey")))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.zcode.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = settings
+                    .get("baseURL")
+                    .or_else(|| options.and_then(|o| o.get("baseURL")))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

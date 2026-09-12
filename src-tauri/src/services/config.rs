@@ -136,6 +136,12 @@ impl ConfigService {
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }
+            AppType::Dsh => {
+                // dsh uses additive mode, no live sync needed
+            }
+            AppType::Zcode => {
+                // zcode uses additive mode, no live sync needed
+            }
         }
 
         Ok(())

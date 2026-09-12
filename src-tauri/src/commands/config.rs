@@ -125,6 +125,21 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), S
                 .parse::<toml_edit::DocumentMut>()
                 .map_err(invalid_toml_format_error)?;
         }
+        "dsh" => {
+            // dsh 通用配置片段是 YAML 文本，顶层必须是 mapping（见
+            // dsh_config::apply_dsh_common_config 的深合并语义）
+            crate::dsh_config::parse_common_config_snippet(snippet)
+                .map_err(|e| format!("Invalid dsh common config: {e}"))?;
+        }
+        "zcode" => {
+            // zcode 通用配置片段是 JSON 对象文本，深合并进 cli/config.json 顶层
+            // （见 zcode_config::apply_zcode_common_config 的深合并语义）
+            let value = serde_json::from_str::<serde_json::Value>(snippet)
+                .map_err(invalid_json_format_error)?;
+            if !value.is_object() {
+                return Err("zcode common config must be a JSON object".to_string());
+            }
+        }
         _ => {}
     }
 
@@ -195,6 +210,22 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Dsh => {
+            let settings_path = crate::dsh_config::get_dsh_settings_path();
+            let exists = settings_path.exists();
+            let path = crate::settings::get_dsh_dir().to_string_lossy().to_string();
+
+            Ok(ConfigStatus { exists, path })
+        }
+        AppType::Zcode => {
+            let settings_path = crate::zcode_config::get_zcode_settings_path();
+            let exists = settings_path.exists();
+            let path = crate::settings::get_zcode_dir()
+                .to_string_lossy()
+                .to_string();
+
+            Ok(ConfigStatus { exists, path })
+        }
     }
 }
 
@@ -215,6 +246,8 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Dsh => crate::settings::get_dsh_dir(),
+        AppType::Zcode => crate::settings::get_zcode_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -232,6 +265,8 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Dsh => crate::settings::get_dsh_dir(),
+        AppType::Zcode => crate::settings::get_zcode_dir(),
     };
 
     if !config_dir.exists() {
@@ -375,7 +410,11 @@ pub async fn set_common_config_snippet(
 
     validate_common_config_snippet(&app_type, &snippet)?;
 
-    let value = if is_cleared { None } else { Some(snippet) };
+    let value = if is_cleared {
+        None
+    } else {
+        Some(snippet.clone())
+    };
 
     if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
         if let Some(legacy_snippet) = old_snippet
@@ -400,6 +439,28 @@ pub async fn set_common_config_snippet(
         .db
         .set_config_snippet_cleared(&app_type, is_cleared)
         .map_err(|e| e.to_string())?;
+
+    // dsh 的通用配置直接落在全局 settings.yaml：保存时立即移除旧片段、
+    // 应用新片段（幂等深合并；值被用户改走的键不动）。
+    if app_type == "dsh" {
+        if let Some(old) = old_snippet.as_deref().filter(|s| !s.trim().is_empty()) {
+            crate::dsh_config::remove_dsh_common_config(old).map_err(|e| e.to_string())?;
+        }
+        if !is_cleared {
+            crate::dsh_config::apply_dsh_common_config(&snippet).map_err(|e| e.to_string())?;
+        }
+    }
+
+    // zcode 的通用配置直接落在全局 cli/config.json：保存时立即移除旧片段、
+    // 应用新片段（幂等深合并；`mcp` 保护键不合并）。
+    if app_type == "zcode" {
+        if let Some(old) = old_snippet.as_deref().filter(|s| !s.trim().is_empty()) {
+            crate::zcode_config::remove_zcode_common_config(old).map_err(|e| e.to_string())?;
+        }
+        if !is_cleared {
+            crate::zcode_config::apply_zcode_common_config(&snippet).map_err(|e| e.to_string())?;
+        }
+    }
 
     if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
         let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
