@@ -5,6 +5,14 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **dsh (DeepSeek Harness) as a newly supported app**: full provider management for `~/.dsh/settings.yaml` (`llm-pi-ai.providers`, additive mode) with API keys split into `~/.dsh/.credentials.yaml` refs (0600), one-click switching via the `agent-default-model` section, MCP sync through idempotent text-block management of `cordis.patch.yml` (user entries, including `!!js` tagged values, preserved verbatim), Skills sync to `~/.dsh/skills`, YAML common-config snippets merged into the global settings file, and Deep Link import. Ships presets for DeepSeek, Kimi (Moonshot), and Zhipu GLM. Hidden by default — enable in Settings → App Visibility. Directory resolution honors `DSH_HOME` and a configurable override.
+- **ZCode (Z.ai) as a newly supported app**: full provider management for `~/.zcode/v2/config.json` (additive mode) with write-time `kind` whitelist validation (invalid values make ZCode wipe its provider config), unknown-field preservation and timestamped backups before every write, MCP sync to `~/.zcode/cli/config.json` (`mcp.servers`, stdio/http/sse), Skills sync to `~/.zcode/skills`, JSON common-config snippets, and Deep Link import. Ships presets for Z.ai, BigModel, and Kimi (OpenAI-compatible). Hidden by default. Note: provider changes require a ZCode restart, MCP changes require a new session, and Skills need a manual refresh in ZCode's settings.
+- **Database schema v14**: adds `enabled_dsh` / `enabled_zcode` columns to `mcp_servers` and `skills` (guarded for legacy databases missing those tables).
+
 ## [3.16.5] - 2026-07-01
 
 Development since v3.16.4 reworks the Codex native-Responses path — restoring a generated model catalog for proxy-less direct-connect, decoupling model mapping from the local-routing toggle, and adding a host/model-prefix blacklist that disables Codex's built-in web_search on gateways that reject it — alongside a broad wave of new provider presets (Qiniu and Code0.ai across all seven apps, the FennoAI/ZetaAPI/TeamoRouter/NekoCode partners, and the non-partner Amux), Claude Sonnet 5 pricing plus a default-tier bump to it, a categorized two-level session view with group-level batch selection, live auto-sync of the shared Claude common config on switch, and a run of credential-safety, tool-detection, Doubao model-id, branding, and icon-size fixes.
