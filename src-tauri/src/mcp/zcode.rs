@@ -43,7 +43,7 @@ fn should_sync_zcode_mcp() -> bool {
 
 /// 取 `root["mcp"]["servers"]` 的可变 Object；缺失按需创建，存在但不是
 /// Object（损坏）时由 zcode_config::ensure_child_object 告警并重建。
-fn ensure_mcp_servers<'a>(root: &'a mut Map<String, Value>) -> &'a mut Map<String, Value> {
+fn ensure_mcp_servers(root: &mut Map<String, Value>) -> &mut Map<String, Value> {
     let mcp = crate::zcode_config::ensure_child_object(root, "mcp");
     crate::zcode_config::ensure_child_object(mcp, "servers")
 }
