@@ -779,6 +779,8 @@
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "dshConfigDir": "DSH 設定ディレクトリ",
     "dshConfigDirDescription": "DSH (DeepSeek Harness) の設定ディレクトリを上書きします。",
+    "zcodeConfigDir": "ZCode 設定ディレクトリ",
+    "zcodeConfigDirDescription": "ZCode (z.ai) の設定ディレクトリを上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -786,6 +788,7 @@
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browsePlaceholderDsh": "例: /home/<your-username>/.dsh",
+    "browsePlaceholderZcode": "例: /home/<your-username>/.zcode",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -896,7 +899,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "dsh": "DSH"
+    "dsh": "DSH",
+    "zcode": "ZCode"
   },
   "sessionManager": {
     "title": "セッション管理",
@@ -1726,7 +1730,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "dsh": "DSH"
+        "dsh": "DSH",
+        "zcode": "ZCode"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -2169,6 +2174,36 @@
       "modelId": "モデル ID",
       "modelIdPlaceholder": "deepseek-chat",
       "modelsHint": "このプロバイダーで利用可能なモデル一覧。任意のモデル属性（input、reasoningEfforts など）は下の JSON で編集できます。"
+    }
+  },
+  "zcode": {
+    "form": {
+      "kind": "API タイプ",
+      "kindHint": "プロバイダーの API プロトコル。エンドポイントに合わせて正しい形式を選択してください。",
+      "kindAnthropic": "Anthropic",
+      "kindOpenai": "OpenAI",
+      "kindOpenaiCompatible": "OpenAI 互換",
+      "baseUrl": "API エンドポイント",
+      "baseUrlHint": "プロバイダーの API エンドポイント URL。",
+      "baseUrlRequired": "API エンドポイントは必須です",
+      "baseUrlScheme": "http:// または https:// で始まるアドレスを指定してください",
+      "baseUrlInvalid": "API エンドポイントは有効な URL ではありません",
+      "providerKey": "プロバイダーキー",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "英数字、アンダースコア、コロン、ハイフンのみ。ZCode 設定のプロバイダー名として使用されます。",
+      "providerKeyLockedHint": "このプロバイダーは ZCode 設定に追加済みのため、キーは変更できません。",
+      "providerKeyRequired": "プロバイダーキーは必須です",
+      "providerKeyInvalid": "プロバイダーキーは英数字、アンダースコア、コロン、ハイフンのみ使用できます",
+      "providerKeyDuplicate": "このプロバイダーキーは既に存在します",
+      "models": "モデル一覧",
+      "addModel": "モデルを追加",
+      "noModels": "モデルが設定されていません。",
+      "modelId": "モデル ID",
+      "modelIdPlaceholder": "glm-5.1",
+      "modelName": "モデル名",
+      "modelNamePlaceholder": "GLM-5.1",
+      "modelsHint": "このプロバイダーで利用可能なモデル一覧。任意のモデル属性（reasoning、limit など）は下の JSON で編集できます。",
+      "runtimeNote": "プロバイダー設定の変更は ZCode の再起動後に反映されます。"
     }
   },
   "env": {

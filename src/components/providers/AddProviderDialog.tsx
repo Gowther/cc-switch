@@ -48,6 +48,7 @@ export function AddProviderDialog({
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "dsh" &&
+    appId !== "zcode" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
@@ -138,12 +139,13 @@ export function AddProviderDialog({
           preset?.category === "official";
       }
 
-      // OpenCode/OpenClaw/Hermes/DSH: pass providerKey for ID generation
+      // OpenCode/OpenClaw/Hermes/DSH/ZCode: pass providerKey for ID generation
       if (
         (appId === "opencode" ||
           appId === "openclaw" ||
           appId === "hermes" ||
-          appId === "dsh") &&
+          appId === "dsh" ||
+          appId === "zcode") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -267,6 +269,11 @@ export function AddProviderDialog({
           }
         } else if (appId === "dsh") {
           // DSH uses baseURL directly
+          if (parsedConfig.baseURL) {
+            addUrl(parsedConfig.baseURL as string);
+          }
+        } else if (appId === "zcode") {
+          // ZCode uses baseURL directly
           if (parsedConfig.baseURL) {
             addUrl(parsedConfig.baseURL as string);
           }

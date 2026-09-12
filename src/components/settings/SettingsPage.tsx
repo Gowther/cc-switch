@@ -356,6 +356,7 @@ export function SettingsPage({
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
                             dshDir={settings.dshConfigDir}
+                            zcodeDir={settings.zcodeConfigDir}
                             onDirectoryChange={updateDirectory}
                             onBrowseDirectory={browseDirectory}
                             onResetDirectory={resetDirectory}

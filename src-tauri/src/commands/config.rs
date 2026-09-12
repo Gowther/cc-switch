@@ -131,6 +131,15 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), S
             crate::dsh_config::parse_common_config_snippet(snippet)
                 .map_err(|e| format!("Invalid dsh common config: {e}"))?;
         }
+        "zcode" => {
+            // zcode 通用配置片段是 JSON 对象文本，深合并进 cli/config.json 顶层
+            // （见 zcode_config::apply_zcode_common_config 的深合并语义）
+            let value = serde_json::from_str::<serde_json::Value>(snippet)
+                .map_err(invalid_json_format_error)?;
+            if !value.is_object() {
+                return Err("zcode common config must be a JSON object".to_string());
+            }
+        }
         _ => {}
     }
 
@@ -208,6 +217,15 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Zcode => {
+            let settings_path = crate::zcode_config::get_zcode_settings_path();
+            let exists = settings_path.exists();
+            let path = crate::settings::get_zcode_dir()
+                .to_string_lossy()
+                .to_string();
+
+            Ok(ConfigStatus { exists, path })
+        }
     }
 }
 
@@ -229,6 +247,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Dsh => crate::settings::get_dsh_dir(),
+        AppType::Zcode => crate::settings::get_zcode_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -247,6 +266,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Dsh => crate::settings::get_dsh_dir(),
+        AppType::Zcode => crate::settings::get_zcode_dir(),
     };
 
     if !config_dir.exists() {
@@ -428,6 +448,17 @@ pub async fn set_common_config_snippet(
         }
         if !is_cleared {
             crate::dsh_config::apply_dsh_common_config(&snippet).map_err(|e| e.to_string())?;
+        }
+    }
+
+    // zcode 的通用配置直接落在全局 cli/config.json：保存时立即移除旧片段、
+    // 应用新片段（幂等深合并；`mcp` 保护键不合并）。
+    if app_type == "zcode" {
+        if let Some(old) = old_snippet.as_deref().filter(|s| !s.trim().is_empty()) {
+            crate::zcode_config::remove_zcode_common_config(old).map_err(|e| e.to_string())?;
+        }
+        if !is_cleared {
+            crate::zcode_config::apply_zcode_common_config(&snippet).map_err(|e| e.to_string())?;
         }
     }
 

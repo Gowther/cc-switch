@@ -115,6 +115,9 @@ pub fn import_mcp_from_deeplink(
             if target_apps.dsh {
                 merged_apps.dsh = true;
             }
+            if target_apps.zcode {
+                merged_apps.zcode = true;
+            }
 
             McpServer {
                 id: existing.id.clone(),
@@ -172,6 +175,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         opencode: false,
         hermes: false,
         dsh: false,
+        zcode: false,
     };
 
     for app in apps_str.split(',') {
@@ -186,6 +190,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             }
             "hermes" => apps.hermes = true,
             "dsh" => apps.dsh = true,
+            "zcode" => apps.zcode = true,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "Invalid app in 'apps': {other}"

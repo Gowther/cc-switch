@@ -21,6 +21,7 @@ interface DirectorySettingsProps {
   openclawDir?: string;
   hermesDir?: string;
   dshDir?: string;
+  zcodeDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -39,6 +40,7 @@ export function DirectorySettings({
   openclawDir,
   hermesDir,
   dshDir,
+  zcodeDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -170,6 +172,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("dsh", val)}
           onBrowse={() => onBrowseDirectory("dsh")}
           onReset={() => onResetDirectory("dsh")}
+        />
+
+        <DirectoryInput
+          label={t("settings.zcodeConfigDir")}
+          description={undefined}
+          value={zcodeDir}
+          resolvedValue={resolvedDirs.zcode}
+          placeholder={t("settings.browsePlaceholderZcode")}
+          onChange={(val) => onDirectoryChange("zcode", val)}
+          onBrowse={() => onBrowseDirectory("zcode")}
+          onReset={() => onResetDirectory("zcode")}
         />
       </section>
     </div>

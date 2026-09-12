@@ -47,6 +47,8 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Dsh => {
             crate::dsh_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
+        AppType::Zcode => crate::zcode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -214,6 +216,18 @@ pub(crate) fn common_config_snippet_has_content(
                     format!("Invalid dsh common config: {e}"),
                 )
             })?;
+            Ok(!mapping.is_empty())
+        }
+        AppType::Zcode => {
+            // zcode 的通用配置片段是 JSON 对象文本（合并进 cli/config.json 顶层）
+            let mapping =
+                crate::zcode_config::parse_common_config_snippet(trimmed).map_err(|e| {
+                    AppError::localized(
+                        "zcode_common_config_invalid",
+                        format!("无效的 zcode 通用配置: {e}"),
+                        format!("Invalid zcode common config: {e}"),
+                    )
+                })?;
             Ok(!mapping.is_empty())
         }
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
@@ -472,6 +486,11 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             // settings_config），因此"是否已包含"直接查 live 文件
             crate::dsh_config::dsh_common_config_applied(trimmed)
         }
+        AppType::Zcode => {
+            // zcode 的通用配置应用在全局 cli/config.json（而非单个 provider 的
+            // settings_config），因此"是否已包含"直接查 live 文件
+            crate::zcode_config::zcode_common_config_applied(trimmed)
+        }
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
     }
 }
@@ -555,6 +574,12 @@ pub(crate) fn remove_common_config_from_settings(
             // 的移除由 set_common_config_snippet 命令的 dsh 分支承担。
             Ok(settings.clone())
         }
+        AppType::Zcode => {
+            // zcode 的通用配置是全局 cli/config.json 的 JSON 片段，从不嵌入
+            // 单个 provider 的 settings_config，此处 no-op（对齐 dsh）。live
+            // 文件侧的移除由 set_common_config_snippet 命令的 zcode 分支承担。
+            Ok(settings.clone())
+        }
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
             Ok(settings.clone())
         }
@@ -625,6 +650,13 @@ fn apply_common_config_to_settings(
             // live 文件（llm-pi-ai / agent-default-model 保护键由 dsh_config
             // 内部跳过）；provider 的 settings_config 本身不变。
             crate::dsh_config::apply_dsh_common_config(trimmed)?;
+            Ok(settings.clone())
+        }
+        AppType::Zcode => {
+            // zcode 的通用配置是全局 cli/config.json 的 JSON 片段，直接深合并
+            // 进 live 文件（mcp 保护键由 zcode_config 内部跳过）；provider 的
+            // settings_config 本身不变。
+            crate::zcode_config::apply_zcode_common_config(trimmed)?;
             Ok(settings.clone())
         }
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
@@ -1052,6 +1084,14 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::dsh_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("dsh provider '{}' written to live config", provider.id);
         }
+        AppType::Zcode => {
+            // zcode uses additive mode - upsert 进 v2/config.json 的
+            // provider 表；zcode 没有"当前激活 provider"的 live 概念（模型
+            // 选择是 ZCode GUI 内部状态），因此没有切换钩子（与 dsh 的
+            // set_default_model 不同）。
+            crate::zcode_config::set_provider(&provider.id, provider.settings_config.clone())?;
+            log::debug!("zcode provider '{}' written to live config", provider.id);
+        }
     }
     Ok(())
 }
@@ -1333,6 +1373,20 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             }
             Ok(config)
         }
+        AppType::Zcode => {
+            let settings_path = crate::zcode_config::get_zcode_settings_path();
+            if !settings_path.exists() {
+                return Err(AppError::localized(
+                    "zcode.config.missing",
+                    "zcode 配置文件不存在",
+                    "zcode configuration file not found",
+                ));
+            }
+            // v2/config.json 是原生 JSON，整体读回即可（provider 表里的
+            // apiKey 在 options 下明文存储，无 dsh 的凭据拆分问题）。
+            let root = crate::zcode_config::read_zcode_settings()?;
+            Ok(Value::Object(root))
+        }
     }
 }
 
@@ -1426,8 +1480,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw, Hermes and dsh use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Dsh => {
+        // OpenCode, OpenClaw, Hermes, dsh and zcode use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Dsh | AppType::Zcode => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1931,6 +1985,100 @@ pub fn remove_dsh_provider_from_live(provider_id: &str) -> Result<(), AppError> 
 
     crate::dsh_config::remove_provider(provider_id)?;
     log::info!("dsh provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Import all providers from zcode live config to database
+///
+/// This imports existing providers from ~/.zcode/v2/config.json（`provider`
+/// 表）into the CC Switch database. Each provider found will be added to the
+/// database with is_current set to false. `get_providers` 已把 zcode 原生
+/// 嵌套形态摊平为扁平 settings_config 契约，与写入方向（set_provider 的
+/// 转换）保持 round-trip 一致。
+pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::zcode_config;
+
+    let providers = zcode_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("zcode")?;
+
+    for (key, config) in providers {
+        // Validate: skip entries with empty key
+        if key.trim().is_empty() {
+            log::warn!("Skipping zcode provider with empty key");
+            continue;
+        }
+
+        if existing_ids.contains(&key) {
+            match state.db.get_provider_by_id(&key, "zcode") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != config {
+                        let mut provider = existing;
+                        provider.settings_config = config;
+                        if let Err(e) = state.db.save_provider("zcode", &provider) {
+                            log::warn!(
+                                "Failed to update zcode provider '{key}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated zcode provider '{key}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("zcode provider '{key}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up zcode provider '{key}': {e}"),
+            }
+            continue;
+        }
+
+        // Create provider（显示名取 zcode 的 displayName，缺省回退为路由键）
+        let display_name = config
+            .get("displayName")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| key.clone());
+        let mut provider = Provider::with_id(key.clone(), display_name, config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        // Save to database
+        if let Err(e) = state.db.save_provider("zcode", &provider) {
+            log::warn!("Failed to import zcode provider '{key}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported zcode provider '{key}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// Remove a zcode provider from live config
+///
+/// This removes a specific provider from ~/.zcode/v2/config.json
+/// without affecting other providers in the file.
+pub fn remove_zcode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    // Check if zcode config directory exists
+    if !crate::settings::get_zcode_dir().exists() {
+        log::debug!("zcode config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    crate::zcode_config::remove_provider(provider_id)?;
+    log::info!("zcode provider '{provider_id}' removed from live config");
 
     Ok(())
 }

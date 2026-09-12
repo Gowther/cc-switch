@@ -90,12 +90,13 @@ export function ProviderActions({
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
 
-  // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes / DSH）
+  // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes / DSH / ZCode）
   const isAdditiveMode =
     (appId === "opencode" && !isOmo) ||
     appId === "openclaw" ||
     appId === "hermes" ||
-    appId === "dsh";
+    appId === "dsh" ||
+    appId === "zcode";
 
   // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
   const isFailoverMode =

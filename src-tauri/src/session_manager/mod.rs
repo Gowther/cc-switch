@@ -108,6 +108,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "gemini" => gemini::load_messages(path),
         "hermes" => hermes::load_messages(path),
         "dsh" => Err("dsh session loading not yet implemented".to_string()),
+        "zcode" => Err("zcode session loading not yet implemented".to_string()),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -168,6 +169,7 @@ fn delete_session_with_roots(
                 "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
                 "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
                 "dsh" => Err("dsh session deletion not yet implemented".to_string()),
+                "zcode" => Err("zcode session deletion not yet implemented".to_string()),
                 _ => Err(format!("Unsupported provider: {provider_id}")),
             };
         }
@@ -198,6 +200,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "dsh" => vec![crate::settings::get_dsh_dir().join("sessions")],
+        "zcode" => vec![crate::settings::get_zcode_dir().join("sessions")],
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

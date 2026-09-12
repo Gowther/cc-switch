@@ -34,6 +34,7 @@ pub fn reset_test_fs() {
         ".config",
         ".openclaw",
         ".dsh",
+        ".zcode",
         "profiles",
     ] {
         let path = home.join(sub);

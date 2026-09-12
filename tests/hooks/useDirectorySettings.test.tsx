@@ -71,6 +71,7 @@ describe("useDirectorySettings", () => {
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
       if (app === "dsh") return "/remote/dsh";
+      if (app === "zcode") return "/remote/zcode";
       return "/remote/hermes";
     });
     selectConfigDirectoryMock.mockReset();
@@ -95,6 +96,7 @@ describe("useDirectorySettings", () => {
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
       dsh: "/remote/dsh",
+      zcode: "/remote/zcode",
     });
   });
 

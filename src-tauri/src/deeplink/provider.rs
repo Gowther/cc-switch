@@ -149,6 +149,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
         AppType::Dsh => build_dsh_settings(request),
+        AppType::Zcode => build_zcode_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -531,6 +532,37 @@ fn build_dsh_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!(config)
 }
 
+/// Build settings for zcode（`~/.zcode/v2/config.json` 的 `provider.<id>`）。
+///
+/// settings_config 是 cc-switch 侧的扁平契约：`{kind, baseURL, apiKey,
+/// apiKeyRequired?, headers?, models?[]}`；写盘时由 zcode_config 转换为 zcode
+/// 原生嵌套形态（options/models map）。`kind` 默认 `openai-compatible`（最
+/// 广泛兼容）；用户可在 UI 切换 `anthropic` / `openai`。
+fn build_zcode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut config = serde_json::Map::new();
+
+    config.insert("kind".to_string(), json!("openai-compatible"));
+
+    if !endpoint.is_empty() {
+        config.insert("baseURL".to_string(), json!(endpoint));
+    }
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("apiKey".to_string(), json!(api_key));
+    }
+
+    if let Some(model) = &request.model {
+        config.insert(
+            "models".to_string(),
+            json!([{ "id": model, "name": model }]),
+        );
+    }
+
+    json!(config)
+}
+
 /// Build Hermes provider settings (snake_case YAML-native fields).
 ///
 /// Hermes' `custom_providers:` entries use `base_url` / `api_key` / `api_mode`
@@ -634,7 +666,7 @@ pub fn parse_and_merge_config(
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "dsh" => {
+        "openclaw" | "opencode" | "hermes" | "dsh" | "zcode" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
         "" => {

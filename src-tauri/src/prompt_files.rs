@@ -26,6 +26,16 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         ));
     }
 
+    // zcode 没有文件级用户 prompt（commands 是 ~/.zcode/commands/*.md 多文件，
+    // 不匹配 cc-switch 的单文件 prompt 模型）
+    if matches!(app, AppType::Zcode) {
+        return Err(AppError::localized(
+            "zcode.prompts_unsupported",
+            "zcode 暂不支持 Prompts",
+            "zcode does not support Prompts",
+        ));
+    }
+
     let base_dir: PathBuf = match app {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
@@ -35,6 +45,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
         AppType::Dsh => unreachable!("handled above"),
+        AppType::Zcode => unreachable!("handled above"),
     };
 
     let filename = match app {
@@ -44,6 +55,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
         AppType::Dsh => unreachable!("handled above"),
+        AppType::Zcode => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))

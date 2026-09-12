@@ -37,6 +37,7 @@ mod store;
 mod tray;
 mod usage_events;
 mod usage_script;
+pub mod zcode_config;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
@@ -47,11 +48,12 @@ pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
-    import_from_claude, import_from_codex, import_from_dsh, import_from_gemini,
+    import_from_claude, import_from_codex, import_from_dsh, import_from_gemini, import_from_zcode,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_dsh,
-    remove_server_from_gemini, sync_enabled_to_claude, sync_enabled_to_codex, sync_enabled_to_dsh,
-    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
-    sync_single_server_to_dsh, sync_single_server_to_gemini,
+    remove_server_from_gemini, remove_server_from_zcode, sync_enabled_to_claude,
+    sync_enabled_to_codex, sync_enabled_to_dsh, sync_enabled_to_gemini, sync_enabled_to_zcode,
+    sync_single_server_to_claude, sync_single_server_to_codex, sync_single_server_to_dsh,
+    sync_single_server_to_gemini, sync_single_server_to_zcode,
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
@@ -710,6 +712,13 @@ pub fn run() {
                 }
                 Ok(_) => log::debug!("○ No dsh provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import dsh providers: {e}"),
+            }
+            match crate::services::provider::import_zcode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} zcode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No zcode provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import zcode providers: {e}"),
             }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
@@ -1470,6 +1479,9 @@ pub fn run() {
             // dsh specific
             commands::import_dsh_providers_from_live,
             commands::get_dsh_live_provider_ids,
+            // zcode specific
+            commands::import_zcode_providers_from_live,
+            commands::get_zcode_live_provider_ids,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,

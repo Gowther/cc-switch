@@ -303,6 +303,7 @@ command = "say"
                 opencode: false,
                 hermes: false,
                 dsh: false,
+                zcode: false,
             },
             description: None,
             homepage: None,

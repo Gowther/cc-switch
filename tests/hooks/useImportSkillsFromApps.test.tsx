@@ -18,6 +18,7 @@ function makeSkill(overrides: Partial<InstalledSkill> = {}): InstalledSkill {
       openclaw: false,
       hermes: false,
       dsh: false,
+      zcode: false,
     },
     installedAt: 0,
     updatedAt: 0,

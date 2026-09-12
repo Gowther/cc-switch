@@ -7,4 +7,5 @@ export type AppId =
   | "opencode"
   | "openclaw"
   | "hermes"
-  | "dsh";
+  | "dsh"
+  | "zcode";

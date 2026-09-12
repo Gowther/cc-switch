@@ -114,6 +114,7 @@ export function useSettings(): UseSettingsResult {
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
       dsh: sanitizeDir(data?.dshConfigDir),
+      zcode: sanitizeDir(data?.zcodeConfigDir),
     });
     setRequiresRestart(false);
   }, [

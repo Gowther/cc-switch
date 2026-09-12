@@ -118,11 +118,18 @@ export function ProviderList({
     enabled: appId === "dsh",
   });
 
+  // ZCode: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: zcodeLiveIds } = useQuery({
+    queryKey: ["zcodeLiveProviderIds"],
+    queryFn: () => providersApi.getZcodeLiveProviderIds(),
+    enabled: appId === "zcode",
+  });
+
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
 
-  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes/DSH）
+  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes/DSH/ZCode）
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
       if (appId === "opencode") {
@@ -137,9 +144,19 @@ export function ProviderList({
       if (appId === "dsh") {
         return dshLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "zcode") {
+        return zcodeLiveIds?.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, dshLiveIds],
+    [
+      appId,
+      opencodeLiveIds,
+      openclawLiveIds,
+      hermesLiveIds,
+      dshLiveIds,
+      zcodeLiveIds,
+    ],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -237,6 +254,10 @@ export function ProviderList({
         const count = await providersApi.importDshFromLive();
         return count > 0;
       }
+      if (appId === "zcode") {
+        const count = await providersApi.importZcodeFromLive();
+        return count > 0;
+      }
       if (appId === "claude-desktop") {
         const count = await providersApi.importClaudeDesktopFromClaude();
         return count > 0;
@@ -275,6 +296,7 @@ export function ProviderList({
         queryClient.invalidateQueries({ queryKey: ["openclaw"] }),
         queryClient.invalidateQueries({ queryKey: ["hermes"] }),
         queryClient.invalidateQueries({ queryKey: ["dshLiveProviderIds"] }),
+        queryClient.invalidateQueries({ queryKey: ["zcodeLiveProviderIds"] }),
       ]);
       toast.success(
         variables.enabled

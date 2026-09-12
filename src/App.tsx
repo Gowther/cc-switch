@@ -130,6 +130,7 @@ const VALID_APPS: AppId[] = [
   "openclaw",
   "hermes",
   "dsh",
+  "zcode",
 ];
 
 const getInitialApp = (): AppId => {
@@ -198,6 +199,7 @@ function App() {
     openclaw: true,
     hermes: true,
     dsh: false,
+    zcode: false,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -209,6 +211,7 @@ function App() {
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
     if (visibleApps.dsh) return "dsh";
+    if (visibleApps.zcode) return "zcode";
     return "claude"; // fallback
   };
 
@@ -290,8 +293,9 @@ function App() {
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
   const hasSkillsSupport = sharedFeatureApp !== "openclaw";
-  // DSH 不支持文件级 Prompts（对齐 openclaw 在 prompt 面板类型上的排除）
-  const hasPromptsSupport = sharedFeatureApp !== "dsh";
+  // DSH/ZCode 不支持文件级 Prompts（对齐 openclaw 在 prompt 面板类型上的排除）
+  const hasPromptsSupport =
+    sharedFeatureApp !== "dsh" && sharedFeatureApp !== "zcode";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -680,6 +684,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: ["dshLiveProviderIds"],
         });
+      } else if (activeApp === "zcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["zcodeLiveProviderIds"],
+        });
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -732,7 +740,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "dsh"
+      activeApp === "dsh" ||
+      activeApp === "zcode"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -752,10 +761,15 @@ function App() {
                     queryKey: hermesKeys.liveProviderIds,
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
-                : await queryClient.ensureQueryData({
-                    queryKey: ["dshLiveProviderIds"],
-                    queryFn: () => providersApi.getDshLiveProviderIds(),
-                  });
+                : activeApp === "dsh"
+                  ? await queryClient.ensureQueryData({
+                      queryKey: ["dshLiveProviderIds"],
+                      queryFn: () => providersApi.getDshLiveProviderIds(),
+                    })
+                  : await queryClient.ensureQueryData({
+                      queryKey: ["zcodeLiveProviderIds"],
+                      queryFn: () => providersApi.getZcodeLiveProviderIds(),
+                    });
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -1010,7 +1024,8 @@ function App() {
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
                         activeApp === "hermes" ||
-                        activeApp === "dsh"
+                        activeApp === "dsh" ||
+                        activeApp === "zcode"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1255,7 +1270,8 @@ function App() {
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
               activeApp !== "hermes" &&
-              activeApp !== "dsh" && (
+              activeApp !== "dsh" &&
+              activeApp !== "zcode" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}

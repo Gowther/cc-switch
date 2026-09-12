@@ -61,6 +61,7 @@ fn make_dsh_server(id: &str, spec: serde_json::Value, dsh_enabled: bool) -> (Str
                 opencode: false,
                 hermes: false,
                 dsh: dsh_enabled,
+                zcode: false,
             },
             description: None,
             homepage: None,

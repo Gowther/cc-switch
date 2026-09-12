@@ -779,6 +779,8 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "dshConfigDir": "DSH Configuration Directory",
     "dshConfigDirDescription": "Override DSH (DeepSeek Harness) configuration directory.",
+    "zcodeConfigDir": "ZCode Configuration Directory",
+    "zcodeConfigDirDescription": "Override ZCode (z.ai) configuration directory.",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -786,6 +788,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderDsh": "e.g., /home/<your-username>/.dsh",
+    "browsePlaceholderZcode": "e.g., /home/<your-username>/.zcode",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -896,7 +899,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "dsh": "DSH"
+    "dsh": "DSH",
+    "zcode": "ZCode"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1726,7 +1730,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "dsh": "DSH"
+        "dsh": "DSH",
+        "zcode": "ZCode"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -2169,6 +2174,36 @@
       "modelId": "Model ID",
       "modelIdPlaceholder": "deepseek-chat",
       "modelsHint": "Models available for this provider. Optional model attributes (e.g. input, reasoningEfforts) can be edited in the JSON below."
+    }
+  },
+  "zcode": {
+    "form": {
+      "kind": "API Kind",
+      "kindHint": "Provider API protocol. Choose the format that matches your endpoint.",
+      "kindAnthropic": "Anthropic",
+      "kindOpenai": "OpenAI",
+      "kindOpenaiCompatible": "OpenAI Compatible",
+      "baseUrl": "API Endpoint",
+      "baseUrlHint": "The API endpoint URL for this provider.",
+      "baseUrlRequired": "API endpoint is required",
+      "baseUrlScheme": "Use an http:// or https:// address",
+      "baseUrlInvalid": "API endpoint is not a valid URL",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "Letters, numbers, underscores, colons, and hyphens only. Used as the provider name in the ZCode config.",
+      "providerKeyLockedHint": "This provider is in ZCode config; key is locked.",
+      "providerKeyRequired": "Provider key is required",
+      "providerKeyInvalid": "Provider key can only contain letters, numbers, underscores, colons, and hyphens",
+      "providerKeyDuplicate": "This provider key already exists",
+      "models": "Models",
+      "addModel": "Add model",
+      "noModels": "No models configured.",
+      "modelId": "Model ID",
+      "modelIdPlaceholder": "glm-5.1",
+      "modelName": "Model Name",
+      "modelNamePlaceholder": "GLM-5.1",
+      "modelsHint": "Models available for this provider. Optional model attributes (e.g. reasoning, limit) can be edited in the JSON below.",
+      "runtimeNote": "Provider changes take effect after restarting ZCode."
     }
   },
   "env": {
