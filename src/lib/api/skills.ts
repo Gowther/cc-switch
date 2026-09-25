@@ -11,7 +11,9 @@ export type AppType =
   | "openclaw"
   | "hermes"
   | "dsh"
-  | "zcode";
+  | "zcode"
+  | "kimi-code"
+  | "antigravity";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -24,6 +26,8 @@ export interface SkillApps {
   hermes: boolean;
   dsh: boolean;
   zcode: boolean;
+  "kimi-code": boolean;
+  antigravity: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

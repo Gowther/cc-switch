@@ -49,6 +49,7 @@ export function AddProviderDialog({
     appId !== "hermes" &&
     appId !== "dsh" &&
     appId !== "zcode" &&
+    appId !== "kimi-code" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
@@ -139,13 +140,14 @@ export function AddProviderDialog({
           preset?.category === "official";
       }
 
-      // OpenCode/OpenClaw/Hermes/DSH/ZCode: pass providerKey for ID generation
+      // OpenCode/OpenClaw/Hermes/DSH/ZCode/Kimi Code: pass providerKey for ID generation
       if (
         (appId === "opencode" ||
           appId === "openclaw" ||
           appId === "hermes" ||
           appId === "dsh" ||
-          appId === "zcode") &&
+          appId === "zcode" ||
+          appId === "kimi-code") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -276,6 +278,11 @@ export function AddProviderDialog({
           // ZCode uses baseURL directly
           if (parsedConfig.baseURL) {
             addUrl(parsedConfig.baseURL as string);
+          }
+        } else if (appId === "kimi-code") {
+          // Kimi Code uses snake_case base_url
+          if (parsedConfig.base_url) {
+            addUrl(parsedConfig.base_url as string);
           }
         }
 

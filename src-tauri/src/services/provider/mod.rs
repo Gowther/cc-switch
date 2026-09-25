@@ -23,9 +23,10 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_dsh_providers_from_live, import_hermes_providers_from_live,
-    import_openclaw_providers_from_live, import_opencode_providers_from_live,
-    import_zcode_providers_from_live, read_live_settings, should_import_default_config_on_startup,
-    sync_current_to_live, update_toml_common_config_snippet,
+    import_kimi_code_providers_from_live, import_openclaw_providers_from_live,
+    import_opencode_providers_from_live, import_zcode_providers_from_live, read_live_settings,
+    should_import_default_config_on_startup, sync_current_to_live,
+    update_toml_common_config_snippet,
 };
 
 // Internal re-exports (pub(crate))
@@ -39,8 +40,8 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_dsh_provider_from_live, remove_hermes_provider_from_live,
-    remove_openclaw_provider_from_live, remove_opencode_provider_from_live,
-    remove_zcode_provider_from_live, write_gemini_live,
+    remove_kimi_code_provider_from_live, remove_openclaw_provider_from_live,
+    remove_opencode_provider_from_live, remove_zcode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -2700,6 +2701,9 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Dsh => remove_dsh_provider_from_live(id)?,
                     AppType::Zcode => remove_zcode_provider_from_live(id)?,
+                    AppType::KimiCode => remove_kimi_code_provider_from_live(id)?,
+                    // Antigravity 无供应商管理，DB 里也不会有记录
+                    AppType::Antigravity => {}
                     _ => {}
                 }
             }
@@ -2770,6 +2774,12 @@ impl ProviderService {
             }
             AppType::Zcode => {
                 remove_zcode_provider_from_live(id)?;
+            }
+            AppType::KimiCode => {
+                remove_kimi_code_provider_from_live(id)?;
+            }
+            AppType::Antigravity => {
+                // Antigravity 无供应商管理，无需 live 移除
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -2889,6 +2899,18 @@ impl ProviderService {
                     "Cannot disable the provider currently in use. Switch to another provider first.",
                 ));
             }
+
+            // Kimi Code：default_model 仍指向该 provider 的别名时禁止禁用
+            // （禁用会从 live 移除并留下悬空 default_model，对齐 dsh 守卫）
+            if matches!(app_type, AppType::KimiCode)
+                && crate::kimi_code_config::default_model_provider_id()?.as_deref() == Some(id)
+            {
+                return Err(AppError::localized(
+                    "provider.disable_current",
+                    "无法禁用当前正在使用的供应商，请先切换到其他供应商。",
+                    "Cannot disable the provider currently in use. Switch to another provider first.",
+                ));
+            }
         }
 
         let restore_to_live = app_type.is_additive_mode()
@@ -2907,6 +2929,9 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Dsh => remove_dsh_provider_from_live(id)?,
                     AppType::Zcode => remove_zcode_provider_from_live(id)?,
+                    AppType::KimiCode => remove_kimi_code_provider_from_live(id)?,
+                    // Antigravity 无供应商管理，DB 里也不会有记录
+                    AppType::Antigravity => {}
                     _ => {}
                 }
             }
@@ -2926,6 +2951,8 @@ impl ProviderService {
                         AppType::Hermes => remove_hermes_provider_from_live(id),
                         AppType::Dsh => remove_dsh_provider_from_live(id),
                         AppType::Zcode => remove_zcode_provider_from_live(id),
+                        AppType::KimiCode => remove_kimi_code_provider_from_live(id),
+                        AppType::Antigravity => Ok(()),
                         _ => Ok(()),
                     }
                 } else {
@@ -3170,6 +3197,20 @@ impl ProviderService {
             }
         }
 
+        // Kimi Code 同为 additive：切换 = 改写 config.toml 顶层 default_model
+        // 指向该 provider 的模型别名 `ccs/<id>`。同样降级为 warning，不阻断切换。
+        if matches!(app_type, AppType::KimiCode) {
+            if let Err(e) = crate::kimi_code_config::set_default_model(&provider.id) {
+                log::warn!(
+                    "Failed to update Kimi Code default_model after switching to '{}': {e}",
+                    provider.id
+                );
+                result
+                    .warnings
+                    .push(format!("kimi_code_default_model_failed:{}", provider.id));
+            }
+        }
+
         // For additive-mode providers that were DB-only (live_config_managed == Some(false)),
         // flip the flag to true now that the provider has been successfully written to the live
         // file. This ensures sync_all_providers_to_live() will include it on future syncs.
@@ -3187,6 +3228,8 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Dsh => remove_dsh_provider_from_live(&provider.id),
                     AppType::Zcode => remove_zcode_provider_from_live(&provider.id),
+                    AppType::KimiCode => remove_kimi_code_provider_from_live(&provider.id),
+                    AppType::Antigravity => Ok(()),
                     _ => Ok(()),
                 };
 
@@ -3546,6 +3589,10 @@ impl ProviderService {
             AppType::Dsh => Ok(String::new()),
             // zcode 的通用配置是全局 JSON 片段（cli/config.json），不从单个 provider settings 提取
             AppType::Zcode => Ok(String::new()),
+            // Kimi Code 的通用配置是全局 TOML 片段（config.toml），不从单个 provider settings 提取
+            AppType::KimiCode => Ok(String::new()),
+            // Antigravity 不支持通用配置片段
+            AppType::Antigravity => Ok(String::new()),
         }
     }
 
@@ -3566,6 +3613,10 @@ impl ProviderService {
             AppType::Dsh => Ok(String::new()),
             // zcode 的通用配置是全局 JSON 片段（cli/config.json），不从单个 provider settings 提取
             AppType::Zcode => Ok(String::new()),
+            // Kimi Code 的通用配置是全局 TOML 片段（config.toml），不从单个 provider settings 提取
+            AppType::KimiCode => Ok(String::new()),
+            // Antigravity 不支持通用配置片段
+            AppType::Antigravity => Ok(String::new()),
         }
     }
 
@@ -4144,6 +4195,20 @@ impl ProviderService {
                 // models 元素需非空 id
                 crate::zcode_config::validate_zcode_provider_config(&provider.settings_config)?;
             }
+            AppType::KimiCode => {
+                // Kimi Code: type 六枚举 + base_url 非空 + model 非空
+                crate::kimi_code_config::validate_kimi_code_provider_config(
+                    &provider.settings_config,
+                )?;
+            }
+            AppType::Antigravity => {
+                // Antigravity 无供应商管理
+                return Err(AppError::localized(
+                    "antigravity.provider.unsupported",
+                    "Antigravity 不支持供应商管理",
+                    "Antigravity does not support provider management",
+                ));
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -4403,6 +4468,36 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::KimiCode => {
+                // Kimi Code 的 settings_config 是 snake_case（`api_key`/`base_url` 顶层，
+                // 对齐 config.toml 原生键名）。
+                let api_key = provider
+                    .settings_config
+                    .get("api_key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.kimi_code.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("base_url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Antigravity => Err(AppError::localized(
+                "antigravity.provider.unsupported",
+                "Antigravity 不支持供应商管理",
+                "Antigravity does not support provider management",
+            )),
         }
     }
 }

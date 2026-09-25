@@ -14,7 +14,9 @@ type AppDirectoryKey =
   | "openclaw"
   | "hermes"
   | "dsh"
-  | "zcode";
+  | "zcode"
+  | "kimi-code"
+  | "antigravity";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -27,6 +29,8 @@ export interface ResolvedDirectories {
   hermes: string;
   dsh: string;
   zcode: string;
+  "kimi-code": string;
+  antigravity: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -42,6 +46,8 @@ const APP_DIRECTORY_META: Record<
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   dsh: { key: "dsh", defaultFolder: ".dsh" },
   zcode: { key: "zcode", defaultFolder: ".zcode" },
+  "kimi-code": { key: "kimi-code", defaultFolder: ".kimi-code" },
+  antigravity: { key: "antigravity", defaultFolder: ".gemini/config" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -56,6 +62,8 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   hermes: "hermesConfigDir",
   dsh: "dshConfigDir",
   zcode: "zcodeConfigDir",
+  "kimi-code": "kimiCodeConfigDir",
+  antigravity: "antigravityConfigDir",
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -143,6 +151,8 @@ export function useDirectorySettings({
     hermes: "",
     dsh: "",
     zcode: "",
+    "kimi-code": "",
+    antigravity: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -156,6 +166,8 @@ export function useDirectorySettings({
     hermes: "",
     dsh: "",
     zcode: "",
+    "kimi-code": "",
+    antigravity: "",
   });
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
 
@@ -176,6 +188,8 @@ export function useDirectorySettings({
           hermesDir,
           dshDir,
           zcodeDir,
+          kimiCodeDir,
+          antigravityDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
@@ -185,6 +199,8 @@ export function useDirectorySettings({
           defaultHermesDir,
           defaultDshDir,
           defaultZcodeDir,
+          defaultKimiCodeDir,
+          defaultAntigravityDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
@@ -195,6 +211,8 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("hermes"),
           settingsApi.getConfigDir("dsh"),
           settingsApi.getConfigDir("zcode"),
+          settingsApi.getConfigDir("kimi-code"),
+          settingsApi.getConfigDir("antigravity"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
@@ -204,6 +222,8 @@ export function useDirectorySettings({
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("dsh"),
           computeDefaultConfigDir("zcode"),
+          computeDefaultConfigDir("kimi-code"),
+          computeDefaultConfigDir("antigravity"),
         ]);
 
         if (!active) return;
@@ -220,6 +240,8 @@ export function useDirectorySettings({
           hermes: defaultHermesDir ?? "",
           dsh: defaultDshDir ?? "",
           zcode: defaultZcodeDir ?? "",
+          "kimi-code": defaultKimiCodeDir ?? "",
+          antigravity: defaultAntigravityDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -235,6 +257,8 @@ export function useDirectorySettings({
           hermes: hermesDir || defaultsRef.current.hermes,
           dsh: dshDir || defaultsRef.current.dsh,
           zcode: zcodeDir || defaultsRef.current.zcode,
+          "kimi-code": kimiCodeDir || defaultsRef.current["kimi-code"],
+          antigravity: antigravityDir || defaultsRef.current.antigravity,
         });
       } catch (error) {
         console.error(
@@ -378,6 +402,9 @@ export function useDirectorySettings({
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         dsh: overrides?.dsh ?? defaultsRef.current.dsh,
         zcode: overrides?.zcode ?? defaultsRef.current.zcode,
+        "kimi-code":
+          overrides?.["kimi-code"] ?? defaultsRef.current["kimi-code"],
+        antigravity: overrides?.antigravity ?? defaultsRef.current.antigravity,
       });
     },
     [],

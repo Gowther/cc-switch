@@ -437,6 +437,8 @@ type = "stdio"
       hermes: false,
       dsh: false,
       zcode: false,
+      "kimi-code": false,
+      antigravity: false,
     });
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(toastErrorMock).not.toHaveBeenCalled();

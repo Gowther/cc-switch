@@ -25,6 +25,7 @@ export const APP_IDS: AppId[] = [
   "hermes",
   "dsh",
   "zcode",
+  "kimi-code",
 ];
 
 /** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
@@ -36,6 +37,8 @@ export const SKILLS_APP_IDS: AppId[] = [
   "hermes",
   "dsh",
   "zcode",
+  "kimi-code",
+  "antigravity",
 ];
 
 /** App IDs shown in MCP panels (excludes OpenClaw) */
@@ -131,5 +134,35 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400",
     badgeClass:
       "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
+  },
+  "kimi-code": {
+    label: "Kimi Code",
+    icon: (
+      <ProviderIcon
+        icon="kimi"
+        name="Kimi Code"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
+  },
+  antigravity: {
+    label: "Antigravity",
+    icon: (
+      <ProviderIcon
+        icon="google"
+        name="Antigravity"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-red-500/10 ring-1 ring-red-500/20 hover:bg-red-500/20 text-red-600 dark:text-red-400",
+    badgeClass:
+      "bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20 border-0 gap-1.5",
   },
 };

@@ -13,7 +13,7 @@ impl Database {
     pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes, enabled_dsh, enabled_zcode
+            "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes, enabled_dsh, enabled_zcode, enabled_kimi_code, enabled_antigravity
              FROM mcp_servers
              ORDER BY name ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
@@ -34,6 +34,8 @@ impl Database {
                 let enabled_hermes: bool = row.get(11)?;
                 let enabled_dsh: bool = row.get(12)?;
                 let enabled_zcode: bool = row.get(13)?;
+                let enabled_kimi_code: bool = row.get(14)?;
+                let enabled_antigravity: bool = row.get(15)?;
 
                 let server = serde_json::from_str(&server_config_str).unwrap_or_default();
                 let tags = serde_json::from_str(&tags_str).unwrap_or_default();
@@ -52,6 +54,8 @@ impl Database {
                             hermes: enabled_hermes,
                             dsh: enabled_dsh,
                             zcode: enabled_zcode,
+                            kimi_code: enabled_kimi_code,
+                            antigravity: enabled_antigravity,
                         },
                         description,
                         homepage,
@@ -76,8 +80,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes, enabled_dsh, enabled_zcode
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes, enabled_dsh, enabled_zcode, enabled_kimi_code, enabled_antigravity
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 server.id,
                 server.name,
@@ -96,6 +100,8 @@ impl Database {
                 server.apps.hermes,
                 server.apps.dsh,
                 server.apps.zcode,
+                server.apps.kimi_code,
+                server.apps.antigravity,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

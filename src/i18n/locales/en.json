@@ -887,7 +887,13 @@
       "defaultCostMultiplierRequired": "Default multiplier is required",
       "defaultCostMultiplierInvalid": "Invalid multiplier format"
     },
-    "saveFailedGeneric": "Save failed, please try again"
+    "saveFailedGeneric": "Save failed, please try again",
+    "kimiCodeConfigDir": "Kimi Code Config Directory",
+    "kimiCodeConfigDirDescription": "Override the Kimi Code config directory (~/.kimi-code).",
+    "antigravityConfigDir": "Antigravity Config Directory",
+    "antigravityConfigDirDescription": "Override the Antigravity config directory (~/.gemini/config).",
+    "browsePlaceholderKimiCode": "e.g., /home/<user>/.kimi-code",
+    "browsePlaceholderAntigravity": "e.g., /home/<user>/.gemini/config"
   },
   "apps": {
     "claude": "Claude",
@@ -900,7 +906,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "dsh": "DSH",
-    "zcode": "ZCode"
+    "zcode": "ZCode",
+    "kimi-code": "Kimi Code",
+    "antigravity": "Antigravity"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1731,7 +1739,9 @@
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
         "dsh": "DSH",
-        "zcode": "ZCode"
+        "zcode": "ZCode",
+        "kimi-code": "Kimi Code",
+        "antigravity": "Antigravity"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -3049,5 +3059,33 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "kimiCode": {
+    "form": {
+      "type": "API Type",
+      "typeHint": "Provider API protocol (the type field in config.toml).",
+      "typeKimi": "Kimi",
+      "typeAnthropic": "Anthropic",
+      "typeOpenai": "OpenAI",
+      "typeOpenaiResponses": "OpenAI Responses",
+      "typeGoogleGenai": "Google GenAI",
+      "typeVertexai": "Vertex AI",
+      "baseUrl": "API Endpoint",
+      "baseUrlHint": "Provider API endpoint address.",
+      "baseUrlRequired": "API endpoint is required",
+      "baseUrlScheme": "Please use an http:// or https:// URL",
+      "baseUrlInvalid": "API endpoint is not a valid URL",
+      "providerKey": "Provider ID",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "Letters, digits, underscores and hyphens only. Used as the provider name in Kimi Code config.",
+      "providerKeyLockedHint": "This provider is already in Kimi Code config; its ID cannot be changed.",
+      "providerKeyRequired": "Provider ID is required",
+      "providerKeyInvalid": "Provider ID may only contain letters, digits, underscores and hyphens",
+      "providerKeyDuplicate": "This provider ID already exists",
+      "model": "Model",
+      "modelPlaceholder": "kimi-for-coding",
+      "modelHint": "Model ID sent to the API (the model field in config.toml). Context window and effort levels can be edited as JSON below.",
+      "runtimeNote": "Written to ~/.kimi-code/config.toml and takes effect for new Kimi Code sessions."
+    }
   }
 }

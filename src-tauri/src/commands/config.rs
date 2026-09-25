@@ -140,6 +140,12 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), S
                 return Err("zcode common config must be a JSON object".to_string());
             }
         }
+        "kimi-code" => {
+            // Kimi Code 通用配置片段是 TOML 文本（见
+            // kimi_code_config::apply_kimi_code_common_config 的深合并语义）
+            crate::kimi_code_config::parse_common_config_snippet(snippet)
+                .map_err(|e| format!("Invalid Kimi Code common config: {e}"))?;
+        }
         _ => {}
     }
 
@@ -226,6 +232,24 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::KimiCode => {
+            let config_path = crate::kimi_code_config::get_kimi_code_config_path();
+            let exists = config_path.exists();
+            let path = crate::settings::get_kimi_code_dir()
+                .to_string_lossy()
+                .to_string();
+
+            Ok(ConfigStatus { exists, path })
+        }
+        AppType::Antigravity => {
+            let mcp_path = crate::antigravity_config::get_antigravity_mcp_path();
+            let exists = mcp_path.exists();
+            let path = crate::settings::get_antigravity_dir()
+                .to_string_lossy()
+                .to_string();
+
+            Ok(ConfigStatus { exists, path })
+        }
     }
 }
 
@@ -248,6 +272,8 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Dsh => crate::settings::get_dsh_dir(),
         AppType::Zcode => crate::settings::get_zcode_dir(),
+        AppType::KimiCode => crate::settings::get_kimi_code_dir(),
+        AppType::Antigravity => crate::settings::get_antigravity_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -267,6 +293,8 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Dsh => crate::settings::get_dsh_dir(),
         AppType::Zcode => crate::settings::get_zcode_dir(),
+        AppType::KimiCode => crate::settings::get_kimi_code_dir(),
+        AppType::Antigravity => crate::settings::get_antigravity_dir(),
     };
 
     if !config_dir.exists() {
@@ -459,6 +487,19 @@ pub async fn set_common_config_snippet(
         }
         if !is_cleared {
             crate::zcode_config::apply_zcode_common_config(&snippet).map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Kimi Code 的通用配置直接落在全局 config.toml：保存时立即移除旧片段、
+    // 应用新片段（幂等深合并；providers/models/default_model 保护键不合并）。
+    if app_type == "kimi-code" {
+        if let Some(old) = old_snippet.as_deref().filter(|s| !s.trim().is_empty()) {
+            crate::kimi_code_config::remove_kimi_code_common_config(old)
+                .map_err(|e| e.to_string())?;
+        }
+        if !is_cleared {
+            crate::kimi_code_config::apply_kimi_code_common_config(&snippet)
+                .map_err(|e| e.to_string())?;
         }
     }
 

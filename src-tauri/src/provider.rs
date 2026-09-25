@@ -210,6 +210,14 @@ impl Provider {
                     str_at(options.and_then(|o| o.get("apiKey"))),
                 )
             }
+            // Kimi Code (config.toml) uses snake_case native field names
+            // (`base_url`/`api_key`) at the top level of settings_config.
+            AppType::KimiCode => (
+                str_at(settings.get("base_url")),
+                str_at(settings.get("api_key")),
+            ),
+            // Antigravity 无供应商管理，无凭据可提取
+            AppType::Antigravity => (String::new(), String::new()),
             // Claude and Claude Desktop both use the Anthropic-style env map, keeping
             // the OpenRouter/Google key fallbacks the JS-script path relies on.
             // Listed explicitly (not `_`) so a new AppType fails to compile here.

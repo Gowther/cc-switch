@@ -1,3 +1,4 @@
+pub mod antigravity_config;
 mod app_config;
 mod app_store;
 mod auto_launch;
@@ -17,6 +18,7 @@ mod gemini_config;
 mod gemini_mcp;
 pub mod hermes_config;
 mod init_status;
+pub mod kimi_code_config;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
@@ -48,12 +50,15 @@ pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
-    import_from_claude, import_from_codex, import_from_dsh, import_from_gemini, import_from_zcode,
+    import_from_antigravity, import_from_claude, import_from_codex, import_from_dsh,
+    import_from_gemini, import_from_kimi_code, import_from_zcode, remove_server_from_antigravity,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_dsh,
-    remove_server_from_gemini, remove_server_from_zcode, sync_enabled_to_claude,
-    sync_enabled_to_codex, sync_enabled_to_dsh, sync_enabled_to_gemini, sync_enabled_to_zcode,
-    sync_single_server_to_claude, sync_single_server_to_codex, sync_single_server_to_dsh,
-    sync_single_server_to_gemini, sync_single_server_to_zcode,
+    remove_server_from_gemini, remove_server_from_kimi_code, remove_server_from_zcode,
+    sync_enabled_to_antigravity, sync_enabled_to_claude, sync_enabled_to_codex,
+    sync_enabled_to_dsh, sync_enabled_to_gemini, sync_enabled_to_kimi_code, sync_enabled_to_zcode,
+    sync_single_server_to_antigravity, sync_single_server_to_claude, sync_single_server_to_codex,
+    sync_single_server_to_dsh, sync_single_server_to_gemini, sync_single_server_to_kimi_code,
+    sync_single_server_to_zcode,
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
@@ -719,6 +724,13 @@ pub fn run() {
                 }
                 Ok(_) => log::debug!("○ No zcode provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import zcode providers: {e}"),
+            }
+            match crate::services::provider::import_kimi_code_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} Kimi Code provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No Kimi Code provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import Kimi Code providers: {e}"),
             }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
@@ -1482,6 +1494,9 @@ pub fn run() {
             // zcode specific
             commands::import_zcode_providers_from_live,
             commands::get_zcode_live_provider_ids,
+            // Kimi Code specific
+            commands::import_kimi_code_providers_from_live,
+            commands::get_kimi_code_live_provider_ids,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,

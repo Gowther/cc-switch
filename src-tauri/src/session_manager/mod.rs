@@ -109,6 +109,8 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "hermes" => hermes::load_messages(path),
         "dsh" => Err("dsh session loading not yet implemented".to_string()),
         "zcode" => Err("zcode session loading not yet implemented".to_string()),
+        "kimi-code" => Err("kimi-code session loading not yet implemented".to_string()),
+        "antigravity" => Err("antigravity session loading not yet implemented".to_string()),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -170,6 +172,10 @@ fn delete_session_with_roots(
                 "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
                 "dsh" => Err("dsh session deletion not yet implemented".to_string()),
                 "zcode" => Err("zcode session deletion not yet implemented".to_string()),
+                "kimi-code" => Err("kimi-code session deletion not yet implemented".to_string()),
+                "antigravity" => {
+                    Err("antigravity session deletion not yet implemented".to_string())
+                }
                 _ => Err(format!("Unsupported provider: {provider_id}")),
             };
         }
@@ -201,6 +207,8 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "dsh" => vec![crate::settings::get_dsh_dir().join("sessions")],
         "zcode" => vec![crate::settings::get_zcode_dir().join("sessions")],
+        "kimi-code" => vec![crate::settings::get_kimi_code_dir().join("sessions")],
+        "antigravity" => vec![crate::settings::get_antigravity_dir().join("sessions")],
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

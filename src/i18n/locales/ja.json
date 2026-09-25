@@ -887,7 +887,13 @@
       "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
       "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
     },
-    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
+    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください",
+    "kimiCodeConfigDir": "Kimi Code 設定ディレクトリ",
+    "kimiCodeConfigDirDescription": "Kimi Code 設定ディレクトリ（~/.kimi-code）を上書きします。",
+    "antigravityConfigDir": "Antigravity 設定ディレクトリ",
+    "antigravityConfigDirDescription": "Antigravity 設定ディレクトリ（~/.gemini/config）を上書きします。",
+    "browsePlaceholderKimiCode": "例: /home/<ユーザー名>/.kimi-code",
+    "browsePlaceholderAntigravity": "例: /home/<ユーザー名>/.gemini/config"
   },
   "apps": {
     "claude": "Claude",
@@ -900,7 +906,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "dsh": "DSH",
-    "zcode": "ZCode"
+    "zcode": "ZCode",
+    "kimi-code": "Kimi Code",
+    "antigravity": "Antigravity"
   },
   "sessionManager": {
     "title": "セッション管理",
@@ -1731,7 +1739,9 @@
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
         "dsh": "DSH",
-        "zcode": "ZCode"
+        "zcode": "ZCode",
+        "kimi-code": "Kimi Code",
+        "antigravity": "Antigravity"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -3049,5 +3059,33 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "kimiCode": {
+    "form": {
+      "type": "API タイプ",
+      "typeHint": "プロバイダーの API プロトコル（config.toml の type フィールド）。",
+      "typeKimi": "Kimi",
+      "typeAnthropic": "Anthropic",
+      "typeOpenai": "OpenAI",
+      "typeOpenaiResponses": "OpenAI Responses",
+      "typeGoogleGenai": "Google GenAI",
+      "typeVertexai": "Vertex AI",
+      "baseUrl": "API エンドポイント",
+      "baseUrlHint": "プロバイダーの API エンドポイントアドレス。",
+      "baseUrlRequired": "API エンドポイントは必須です",
+      "baseUrlScheme": "http:// または https:// で始まるアドレスを使用してください",
+      "baseUrlInvalid": "API エンドポイントが有効な URL ではありません",
+      "providerKey": "プロバイダー ID",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "使用可能なのは文字・数字・アンダースコア・ハイフンのみです。Kimi Code 設定のプロバイダー名として使用されます。",
+      "providerKeyLockedHint": "このプロバイダーは Kimi Code 設定に追加済みのため、ID を変更できません。",
+      "providerKeyRequired": "プロバイダー ID は必須です",
+      "providerKeyInvalid": "プロバイダー ID には文字・数字・アンダースコア・ハイフンのみ使用できます",
+      "providerKeyDuplicate": "このプロバイダー ID は既に存在します",
+      "model": "モデル",
+      "modelPlaceholder": "kimi-for-coding",
+      "modelHint": "API 呼び出し時に送信されるモデル ID（config.toml の model フィールド）。コンテキストウィンドウや思考レベルなどのオプション属性は、下の JSON で編集できます。",
+      "runtimeNote": "~/.kimi-code/config.toml に書き込まれ、新しい Kimi Code セッションから有効になります。"
+    }
   }
 }

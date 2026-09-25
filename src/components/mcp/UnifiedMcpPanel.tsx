@@ -66,6 +66,8 @@ const UnifiedMcpPanel = React.forwardRef<
       hermes: 0,
       dsh: 0,
       zcode: 0,
+      "kimi-code": 0,
+      antigravity: 0,
     };
     serverEntries.forEach(([_, server]) => {
       for (const app of MCP_APP_IDS) {

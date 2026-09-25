@@ -49,6 +49,10 @@ pub(crate) fn provider_exists_in_live_config(
         }
         AppType::Zcode => crate::zcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::KimiCode => crate::kimi_code_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
+        // Antigravity 无供应商管理
+        AppType::Antigravity => Ok(false),
         _ => Ok(false),
     }
 }
@@ -230,6 +234,20 @@ pub(crate) fn common_config_snippet_has_content(
                 })?;
             Ok(!mapping.is_empty())
         }
+        AppType::KimiCode => {
+            // Kimi Code 的通用配置片段是 TOML 文本（合并进 config.toml 顶层）
+            let doc =
+                crate::kimi_code_config::parse_common_config_snippet(trimmed).map_err(|e| {
+                    AppError::localized(
+                        "kimi_code_common_config_invalid",
+                        format!("无效的 Kimi Code 通用配置: {e}"),
+                        format!("Invalid Kimi Code common config: {e}"),
+                    )
+                })?;
+            Ok(!doc.is_empty())
+        }
+        // Antigravity 不支持通用配置片段
+        AppType::Antigravity => Ok(false),
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
             Ok(false)
         }
@@ -491,7 +509,16 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             // settings_config），因此"是否已包含"直接查 live 文件
             crate::zcode_config::zcode_common_config_applied(trimmed)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::KimiCode => {
+            // Kimi Code 的通用配置应用在全局 config.toml（而非单个 provider 的
+            // settings_config），因此"是否已包含"直接查 live 文件
+            crate::kimi_code_config::kimi_code_common_config_applied(trimmed)
+        }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop
+        | AppType::Antigravity => false,
     }
 }
 
@@ -580,9 +607,17 @@ pub(crate) fn remove_common_config_from_settings(
             // 文件侧的移除由 set_common_config_snippet 命令的 zcode 分支承担。
             Ok(settings.clone())
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+        AppType::KimiCode => {
+            // Kimi Code 的通用配置是全局 config.toml 的 TOML 片段，从不嵌入
+            // 单个 provider 的 settings_config，此处 no-op（对齐 dsh）。live
+            // 文件侧的移除由 set_common_config_snippet 命令的 kimi-code 分支承担。
             Ok(settings.clone())
         }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop
+        | AppType::Antigravity => Ok(settings.clone()),
     }
 }
 
@@ -659,9 +694,18 @@ fn apply_common_config_to_settings(
             crate::zcode_config::apply_zcode_common_config(trimmed)?;
             Ok(settings.clone())
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+        AppType::KimiCode => {
+            // Kimi Code 的通用配置是全局 config.toml 的 TOML 片段，直接深合并
+            // 进 live 文件（providers/models/default_model 保护键由
+            // kimi_code_config 内部跳过）；provider 的 settings_config 本身不变。
+            crate::kimi_code_config::apply_kimi_code_common_config(trimmed)?;
             Ok(settings.clone())
         }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop
+        | AppType::Antigravity => Ok(settings.clone()),
     }
 }
 
@@ -1092,6 +1136,24 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::zcode_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("zcode provider '{}' written to live config", provider.id);
         }
+        AppType::KimiCode => {
+            // Kimi Code uses additive mode - upsert 进 config.toml 的
+            // [providers."ccs-<id>"] + [models."ccs/<id>"] 两张表；"当前供应商"
+            // 语义由 switch 流程里的 set_default_model 钩子承担（对齐 dsh）。
+            crate::kimi_code_config::set_provider(&provider.id, provider.settings_config.clone())?;
+            log::debug!(
+                "Kimi Code provider '{}' written to live config",
+                provider.id
+            );
+        }
+        AppType::Antigravity => {
+            // Antigravity 无供应商管理（官方不支持 BYOK），不应到达这里
+            return Err(AppError::localized(
+                "antigravity.provider.unsupported",
+                "Antigravity 不支持供应商管理",
+                "Antigravity does not support provider management",
+            ));
+        }
     }
     Ok(())
 }
@@ -1387,6 +1449,22 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let root = crate::zcode_config::read_zcode_settings()?;
             Ok(Value::Object(root))
         }
+        AppType::KimiCode => {
+            let config_path = crate::kimi_code_config::get_kimi_code_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "kimi_code.config.missing",
+                    "Kimi Code 配置文件不存在",
+                    "Kimi Code configuration file not found",
+                ));
+            }
+            crate::kimi_code_config::read_kimi_code_config_json()
+        }
+        AppType::Antigravity => Err(AppError::localized(
+            "antigravity.provider.unsupported",
+            "Antigravity 不支持供应商管理",
+            "Antigravity does not support provider management",
+        )),
     }
 }
 
@@ -1480,9 +1558,22 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw, Hermes, dsh and zcode use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Dsh | AppType::Zcode => {
+        // OpenCode, OpenClaw, Hermes, dsh, zcode and Kimi Code use additive mode and are
+        // handled by early return above; Antigravity has no provider management.
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Dsh
+        | AppType::Zcode
+        | AppType::KimiCode => {
             unreachable!("additive mode apps are handled by early return")
+        }
+        AppType::Antigravity => {
+            return Err(AppError::localized(
+                "antigravity.provider.unsupported",
+                "Antigravity 不支持供应商管理",
+                "Antigravity does not support provider management",
+            ));
         }
     };
 
@@ -2079,6 +2170,99 @@ pub fn remove_zcode_provider_from_live(provider_id: &str) -> Result<(), AppError
 
     crate::zcode_config::remove_provider(provider_id)?;
     log::info!("zcode provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Import all providers from Kimi Code live config to database
+///
+/// This imports existing providers from ~/.kimi-code/config.toml
+/// （`[providers."ccs-*"]` + `[models."ccs/*"]`）into the CC Switch database.
+/// `get_providers` 已把两张 TOML 表合并为扁平 settings_config 契约。
+pub fn import_kimi_code_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::kimi_code_config;
+
+    let providers = kimi_code_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("kimi-code")?;
+
+    for (key, config) in providers {
+        if key.trim().is_empty() {
+            log::warn!("Skipping Kimi Code provider with empty key");
+            continue;
+        }
+
+        if existing_ids.contains(&key) {
+            match state.db.get_provider_by_id(&key, "kimi-code") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != config {
+                        let mut provider = existing;
+                        provider.settings_config = config;
+                        if let Err(e) = state.db.save_provider("kimi-code", &provider) {
+                            log::warn!(
+                                "Failed to update Kimi Code provider '{key}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated Kimi Code provider '{key}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("Kimi Code provider '{key}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up Kimi Code provider '{key}': {e}"),
+            }
+            continue;
+        }
+
+        // Create provider（显示名取模型表的 display_name，缺省回退为 id）
+        let display_name = config
+            .get("display_name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| key.clone());
+        let mut provider = Provider::with_id(key.clone(), display_name, config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("kimi-code", &provider) {
+            log::warn!("Failed to import Kimi Code provider '{key}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported Kimi Code provider '{key}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// Remove a Kimi Code provider from live config
+///
+/// This removes a specific provider from ~/.kimi-code/config.toml（连同其
+/// 模型别名；若 default_model 指向该别名则一并清除，见 kimi_code_config）
+/// without affecting other providers in the file.
+pub fn remove_kimi_code_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    // Check if Kimi Code config directory exists
+    if !crate::settings::get_kimi_code_dir().exists() {
+        log::debug!(
+            "Kimi Code config directory doesn't exist, skipping removal of '{provider_id}'"
+        );
+        return Ok(());
+    }
+
+    crate::kimi_code_config::remove_provider(provider_id)?;
+    log::info!("Kimi Code provider '{provider_id}' removed from live config");
 
     Ok(())
 }

@@ -47,7 +47,8 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "openclaw" ||
         appId === "hermes" ||
         appId === "dsh" ||
-        appId === "zcode"
+        appId === "zcode" ||
+        appId === "kimi-code"
       ) {
         if (
           providerInput.category === "omo" ||
@@ -112,6 +113,12 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (appId === "zcode") {
         await queryClient.invalidateQueries({
           queryKey: ["zcodeLiveProviderIds"],
+        });
+      }
+
+      if (appId === "kimi-code") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
         });
       }
 
@@ -190,6 +197,12 @@ export const useUpdateProviderMutation = (appId: AppId) => {
           queryKey: ["zcodeLiveProviderIds"],
         });
       }
+
+      if (appId === "kimi-code") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
+        });
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -256,6 +269,12 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       if (appId === "zcode") {
         await queryClient.invalidateQueries({
           queryKey: ["zcodeLiveProviderIds"],
+        });
+      }
+
+      if (appId === "kimi-code") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
         });
       }
 
@@ -342,6 +361,12 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       if (appId === "zcode") {
         await queryClient.invalidateQueries({
           queryKey: ["zcodeLiveProviderIds"],
+        });
+      }
+
+      if (appId === "kimi-code") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
         });
       }
 

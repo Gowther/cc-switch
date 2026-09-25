@@ -36,6 +36,25 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         ));
     }
 
+    // Kimi Code 没有单文件用户级 prompt
+    if matches!(app, AppType::KimiCode) {
+        return Err(AppError::localized(
+            "kimi_code.prompts_unsupported",
+            "Kimi Code 暂不支持 Prompts",
+            "Kimi Code does not support Prompts",
+        ));
+    }
+
+    // Antigravity 的全局 rules 文件 ~/.gemini/GEMINI.md 与 Gemini CLI 的
+    // 提示词文件同路径，已由 Gemini 应用的 Prompts 功能管理，避免双重管理
+    if matches!(app, AppType::Antigravity) {
+        return Err(AppError::localized(
+            "antigravity.prompts_unsupported",
+            "Antigravity 暂不支持 Prompts（其全局 rules 文件与 Gemini 共享，请使用 Gemini 页的 Prompts）",
+            "Antigravity does not support Prompts (its global rules file is shared with Gemini; use the Gemini app's Prompts)",
+        ));
+    }
+
     let base_dir: PathBuf = match app {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
@@ -46,6 +65,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::ClaudeDesktop => unreachable!("handled above"),
         AppType::Dsh => unreachable!("handled above"),
         AppType::Zcode => unreachable!("handled above"),
+        AppType::KimiCode => unreachable!("handled above"),
+        AppType::Antigravity => unreachable!("handled above"),
     };
 
     let filename = match app {
@@ -56,6 +77,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::ClaudeDesktop => unreachable!("handled above"),
         AppType::Dsh => unreachable!("handled above"),
         AppType::Zcode => unreachable!("handled above"),
+        AppType::KimiCode => unreachable!("handled above"),
+        AppType::Antigravity => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))

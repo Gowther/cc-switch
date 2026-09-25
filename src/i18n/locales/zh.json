@@ -887,7 +887,13 @@
       "defaultCostMultiplierRequired": "默认倍率不能为空",
       "defaultCostMultiplierInvalid": "默认倍率格式不正确"
     },
-    "saveFailedGeneric": "保存失败，请重试"
+    "saveFailedGeneric": "保存失败，请重试",
+    "kimiCodeConfigDir": "Kimi Code 配置目录",
+    "kimiCodeConfigDirDescription": "覆盖 Kimi Code 配置目录（~/.kimi-code）。",
+    "antigravityConfigDir": "Antigravity 配置目录",
+    "antigravityConfigDirDescription": "覆盖 Antigravity 配置目录（~/.gemini/config）。",
+    "browsePlaceholderKimiCode": "例如：/home/<你的用户名>/.kimi-code",
+    "browsePlaceholderAntigravity": "例如：/home/<你的用户名>/.gemini/config"
   },
   "apps": {
     "claude": "Claude",
@@ -900,7 +906,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "dsh": "DSH",
-    "zcode": "ZCode"
+    "zcode": "ZCode",
+    "kimi-code": "Kimi Code",
+    "antigravity": "Antigravity"
   },
   "sessionManager": {
     "title": "会话管理",
@@ -1731,7 +1739,9 @@
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
         "dsh": "DSH",
-        "zcode": "ZCode"
+        "zcode": "ZCode",
+        "kimi-code": "Kimi Code",
+        "antigravity": "Antigravity"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -3049,5 +3059,33 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "kimiCode": {
+    "form": {
+      "type": "API 类型",
+      "typeHint": "供应商 API 协议（config.toml 的 type 字段）。",
+      "typeKimi": "Kimi",
+      "typeAnthropic": "Anthropic",
+      "typeOpenai": "OpenAI",
+      "typeOpenaiResponses": "OpenAI Responses",
+      "typeGoogleGenai": "Google GenAI",
+      "typeVertexai": "Vertex AI",
+      "baseUrl": "API 端点",
+      "baseUrlHint": "供应商的 API 端点地址。",
+      "baseUrlRequired": "API 端点不能为空",
+      "baseUrlScheme": "请使用 http:// 或 https:// 开头的地址",
+      "baseUrlInvalid": "API 端点不是有效的 URL",
+      "providerKey": "供应商标识",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "只能使用字母、数字、下划线和连字符。用作 Kimi Code 配置中的供应商名称。",
+      "providerKeyLockedHint": "该供应商已添加到 Kimi Code 配置中，标识不可修改。",
+      "providerKeyRequired": "供应商标识不能为空",
+      "providerKeyInvalid": "供应商标识只能包含字母、数字、下划线和连字符",
+      "providerKeyDuplicate": "该供应商标识已存在",
+      "model": "模型",
+      "modelPlaceholder": "kimi-for-coding",
+      "modelHint": "调用 API 时发送的模型 ID（config.toml 的 model 字段）。上下文窗口、思考档位等可选属性可在下方 JSON 中编辑。",
+      "runtimeNote": "配置写入 ~/.kimi-code/config.toml，对新建的 Kimi Code 会话生效。"
+    }
   }
 }

@@ -68,7 +68,9 @@ impl Database {
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0, enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
-            enabled_zcode BOOLEAN NOT NULL DEFAULT 0
+            enabled_zcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi_code BOOLEAN NOT NULL DEFAULT 0,
+            enabled_antigravity BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -99,6 +101,8 @@ impl Database {
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_zcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi_code BOOLEAN NOT NULL DEFAULT 0,
+            enabled_antigravity BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -492,6 +496,13 @@ impl Database {
                         log::info!("迁移数据库从 v13 到 v14（添加 dsh / zcode 应用支持）");
                         Self::migrate_v13_to_v14(conn)?;
                         Self::set_user_version(conn, 14)?;
+                    }
+                    14 => {
+                        log::info!(
+                            "迁移数据库从 v14 到 v15（添加 Kimi Code / Antigravity 应用支持）"
+                        );
+                        Self::migrate_v14_to_v15(conn)?;
+                        Self::set_user_version(conn, 15)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1379,6 +1390,44 @@ impl Database {
         }
 
         log::info!("v13 -> v14 迁移完成：已添加 dsh / zcode 应用启用列");
+        Ok(())
+    }
+
+    /// v14 -> v15 迁移：mcp_servers / skills 表添加 Kimi Code 与 Antigravity 应用启用列
+    fn migrate_v14_to_v15(conn: &Connection) -> Result<(), AppError> {
+        // mcp_servers / skills 表在非常旧的库（或未走过对应建表迁移的 fixture）
+        // 里可能不存在，与 v14 一样加 table_exists 守卫
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_kimi_code",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_antigravity",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_kimi_code",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_antigravity",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        log::info!("v14 -> v15 迁移完成：已添加 Kimi Code / Antigravity 应用启用列");
         Ok(())
     }
 

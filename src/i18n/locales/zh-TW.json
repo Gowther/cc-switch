@@ -858,7 +858,13 @@
       "defaultCostMultiplierRequired": "預設倍率不能為空",
       "defaultCostMultiplierInvalid": "預設倍率格式不正確"
     },
-    "saveFailedGeneric": "儲存失敗，請重試"
+    "saveFailedGeneric": "儲存失敗，請重試",
+    "kimiCodeConfigDir": "Kimi Code 設定目錄",
+    "kimiCodeConfigDirDescription": "自訂 Kimi Code 設定目錄（~/.kimi-code）。",
+    "antigravityConfigDir": "Antigravity 設定目錄",
+    "antigravityConfigDirDescription": "自訂 Antigravity 設定目錄（~/.gemini/config）。",
+    "browsePlaceholderKimiCode": "例如：/home/<您的使用者名稱>/.kimi-code",
+    "browsePlaceholderAntigravity": "例如：/home/<您的使用者名稱>/.gemini/config"
   },
   "apps": {
     "claude": "Claude",
@@ -871,7 +877,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "dsh": "DSH",
-    "zcode": "ZCode"
+    "zcode": "ZCode",
+    "kimi-code": "Kimi Code",
+    "antigravity": "Antigravity"
   },
   "sessionManager": {
     "title": "工作階段管理",
@@ -1703,7 +1711,9 @@
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
         "dsh": "DSH",
-        "zcode": "ZCode"
+        "zcode": "ZCode",
+        "kimi-code": "Kimi Code",
+        "antigravity": "Antigravity"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",
@@ -3021,5 +3031,33 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "kimiCode": {
+    "form": {
+      "type": "API 類型",
+      "typeHint": "供應商 API 協議（config.toml 的 type 欄位）。",
+      "typeKimi": "Kimi",
+      "typeAnthropic": "Anthropic",
+      "typeOpenai": "OpenAI",
+      "typeOpenaiResponses": "OpenAI Responses",
+      "typeGoogleGenai": "Google GenAI",
+      "typeVertexai": "Vertex AI",
+      "baseUrl": "API 端點",
+      "baseUrlHint": "供應商的 API 端點位址。",
+      "baseUrlRequired": "API 端點不能為空",
+      "baseUrlScheme": "請使用 http:// 或 https:// 開頭的網址",
+      "baseUrlInvalid": "API 端點不是有效的 URL",
+      "providerKey": "供應商識別碼",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "只能使用字母、數字、底線和連字號。用作 Kimi Code 設定中的供應商名稱。",
+      "providerKeyLockedHint": "此供應商已加入 Kimi Code 設定中，識別碼不可修改。",
+      "providerKeyRequired": "供應商識別碼不能為空",
+      "providerKeyInvalid": "供應商識別碼只能包含字母、數字、底線和連字號",
+      "providerKeyDuplicate": "此供應商識別碼已存在",
+      "model": "模型",
+      "modelPlaceholder": "kimi-for-coding",
+      "modelHint": "呼叫 API 時傳送的模型 ID（config.toml 的 model 欄位）。上下文窗口、思考層級等可選屬性可在下方 JSON 中編輯。",
+      "runtimeNote": "設定寫入 ~/.kimi-code/config.toml，對新建的 Kimi Code 會話生效。"
+    }
   }
 }

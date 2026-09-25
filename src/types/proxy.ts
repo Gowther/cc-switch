@@ -51,6 +51,8 @@ export interface ProxyTakeoverStatus {
   hermes: boolean;
   dsh: boolean;
   zcode: boolean;
+  "kimi-code"?: boolean;
+  antigravity?: boolean;
 }
 
 export interface ProviderHealth {

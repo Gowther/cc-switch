@@ -115,6 +115,8 @@ export function useSettings(): UseSettingsResult {
       hermes: sanitizeDir(data?.hermesConfigDir),
       dsh: sanitizeDir(data?.dshConfigDir),
       zcode: sanitizeDir(data?.zcodeConfigDir),
+      "kimi-code": sanitizeDir(data?.kimiCodeConfigDir),
+      antigravity: sanitizeDir(data?.antigravityConfigDir),
     });
     setRequiresRestart(false);
   }, [

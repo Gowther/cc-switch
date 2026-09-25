@@ -84,6 +84,14 @@ export const handlers = [
     success(getLiveProviderIds("zcode")),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_kimi_code_live_provider_ids`, () =>
+    success(getLiveProviderIds("kimi-code")),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_antigravity_live_provider_ids`, () =>
+    success(getLiveProviderIds("antigravity")),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_openclaw_default_model`, () =>
     success({ primary: null, fallback: [] }),
   ),

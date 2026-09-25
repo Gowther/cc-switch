@@ -12,7 +12,13 @@ type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
 type McpConfigState = Record<AppId, Record<string, McpServer>>;
 type LiveProviderIdsByApp = Record<
-  "opencode" | "openclaw" | "hermes" | "dsh" | "zcode",
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "dsh"
+  | "zcode"
+  | "kimi-code"
+  | "antigravity",
   string[]
 >;
 
@@ -74,6 +80,8 @@ const createDefaultProviders = (): ProvidersByApp => ({
   hermes: {},
   dsh: {},
   zcode: {},
+  "kimi-code": {},
+  antigravity: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -86,6 +94,8 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   hermes: "",
   dsh: "",
   zcode: "",
+  "kimi-code": "",
+  antigravity: "",
 });
 
 let providers = createDefaultProviders();
@@ -96,6 +106,8 @@ let liveProviderIds: LiveProviderIdsByApp = {
   hermes: [],
   dsh: [],
   zcode: [],
+  "kimi-code": [],
+  antigravity: [],
 };
 let settingsState: Settings = {
   showInTray: true,
@@ -171,6 +183,8 @@ let mcpConfigs: McpConfigState = {
         hermes: false,
         dsh: false,
         zcode: false,
+        "kimi-code": false,
+        antigravity: false,
       },
       server: {
         type: "stdio",
@@ -193,6 +207,8 @@ let mcpConfigs: McpConfigState = {
         hermes: false,
         dsh: false,
         zcode: false,
+        "kimi-code": false,
+        antigravity: false,
       },
       server: {
         type: "http",
@@ -206,6 +222,8 @@ let mcpConfigs: McpConfigState = {
   hermes: {},
   dsh: {},
   zcode: {},
+  "kimi-code": {},
+  antigravity: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -220,6 +238,8 @@ export const resetProviderState = () => {
     hermes: [],
     dsh: [],
     zcode: [],
+    "kimi-code": [],
+    antigravity: [],
   };
   sessionsState = createDefaultSessions();
   sessionMessagesState = createDefaultSessionMessages();
@@ -247,6 +267,8 @@ export const resetProviderState = () => {
           hermes: false,
           dsh: false,
           zcode: false,
+          "kimi-code": false,
+          antigravity: false,
         },
         server: {
           type: "stdio",
@@ -269,6 +291,8 @@ export const resetProviderState = () => {
           hermes: false,
           dsh: false,
           zcode: false,
+          "kimi-code": false,
+          antigravity: false,
         },
         server: {
           type: "http",
@@ -282,6 +306,8 @@ export const resetProviderState = () => {
     hermes: {},
     dsh: {},
     zcode: {},
+    "kimi-code": {},
+    antigravity: {},
   };
 };
 
@@ -291,11 +317,25 @@ export const getProviders = (appType: AppId) =>
 export const getCurrentProviderId = (appType: AppId) => current[appType] ?? "";
 
 export const getLiveProviderIds = (
-  appType: "opencode" | "openclaw" | "hermes" | "dsh" | "zcode",
+  appType:
+    | "opencode"
+    | "openclaw"
+    | "hermes"
+    | "dsh"
+    | "zcode"
+    | "kimi-code"
+    | "antigravity",
 ) => [...liveProviderIds[appType]];
 
 export const setLiveProviderIds = (
-  appType: "opencode" | "openclaw" | "hermes" | "dsh" | "zcode",
+  appType:
+    | "opencode"
+    | "openclaw"
+    | "hermes"
+    | "dsh"
+    | "zcode"
+    | "kimi-code"
+    | "antigravity",
   ids: string[],
 ) => {
   liveProviderIds[appType] = [...ids];

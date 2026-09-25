@@ -89,7 +89,8 @@ export function useApiKeyLink({
       appId === "openclaw" ||
       appId === "hermes" ||
       appId === "dsh" ||
-      appId === "zcode"
+      appId === "zcode" ||
+      appId === "kimi-code"
         ? shouldShowApiKeyLink
         : false,
     websiteUrl: getWebsiteUrl,

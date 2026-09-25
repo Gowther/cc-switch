@@ -19,6 +19,8 @@ function makeSkill(overrides: Partial<InstalledSkill> = {}): InstalledSkill {
       hermes: false,
       dsh: false,
       zcode: false,
+      "kimi-code": false,
+      antigravity: false,
     },
     installedAt: 0,
     updatedAt: 0,

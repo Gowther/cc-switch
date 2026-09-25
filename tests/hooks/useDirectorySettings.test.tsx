@@ -72,6 +72,8 @@ describe("useDirectorySettings", () => {
       if (app === "openclaw") return "/remote/openclaw";
       if (app === "dsh") return "/remote/dsh";
       if (app === "zcode") return "/remote/zcode";
+      if (app === "kimi-code") return "/remote/kimi-code";
+      if (app === "antigravity") return "/remote/antigravity";
       return "/remote/hermes";
     });
     selectConfigDirectoryMock.mockReset();
@@ -97,6 +99,8 @@ describe("useDirectorySettings", () => {
       hermes: "/remote/hermes",
       dsh: "/remote/dsh",
       zcode: "/remote/zcode",
+      "kimi-code": "/remote/kimi-code",
+      antigravity: "/remote/antigravity",
     });
   });
 

@@ -125,6 +125,13 @@ export function ProviderList({
     enabled: appId === "zcode",
   });
 
+  // Kimi Code: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: kimiCodeLiveIds } = useQuery({
+    queryKey: ["kimiCodeLiveProviderIds"],
+    queryFn: () => providersApi.getKimiCodeLiveProviderIds(),
+    enabled: appId === "kimi-code",
+  });
+
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
@@ -147,6 +154,9 @@ export function ProviderList({
       if (appId === "zcode") {
         return zcodeLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "kimi-code") {
+        return kimiCodeLiveIds?.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
     [
@@ -156,6 +166,7 @@ export function ProviderList({
       hermesLiveIds,
       dshLiveIds,
       zcodeLiveIds,
+      kimiCodeLiveIds,
     ],
   );
 
@@ -258,6 +269,10 @@ export function ProviderList({
         const count = await providersApi.importZcodeFromLive();
         return count > 0;
       }
+      if (appId === "kimi-code") {
+        const count = await providersApi.importKimiCodeFromLive();
+        return count > 0;
+      }
       if (appId === "claude-desktop") {
         const count = await providersApi.importClaudeDesktopFromClaude();
         return count > 0;
@@ -297,6 +312,9 @@ export function ProviderList({
         queryClient.invalidateQueries({ queryKey: ["hermes"] }),
         queryClient.invalidateQueries({ queryKey: ["dshLiveProviderIds"] }),
         queryClient.invalidateQueries({ queryKey: ["zcodeLiveProviderIds"] }),
+        queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
+        }),
       ]);
       toast.success(
         variables.enabled

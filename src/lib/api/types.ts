@@ -8,4 +8,6 @@ export type AppId =
   | "openclaw"
   | "hermes"
   | "dsh"
-  | "zcode";
+  | "zcode"
+  | "kimi-code"
+  | "antigravity";

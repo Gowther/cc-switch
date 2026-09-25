@@ -31,7 +31,7 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
   const { t } = useTranslation();
   const appName = t(`apps.${appId}`);
   const filenameMap: Record<
-    Exclude<AppId, "openclaw" | "dsh" | "zcode">,
+    Exclude<AppId, "openclaw" | "dsh" | "zcode" | "kimi-code" | "antigravity">,
     string
   > = {
     claude: "CLAUDE.md",

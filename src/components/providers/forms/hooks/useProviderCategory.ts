@@ -9,6 +9,7 @@ import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { hermesProviderPresets } from "@/config/hermesProviderPresets";
 import { dshProviderPresets } from "@/config/dshProviderPresets";
 import { zcodeProviderPresets } from "@/config/zcodeProviderPresets";
+import { kimiCodeProviderPresets } from "@/config/kimiCodeProviderPresets";
 
 interface UseProviderCategoryProps {
   appId: AppId;
@@ -46,9 +47,9 @@ export function useProviderCategory({
 
     if (!selectedPresetId) return;
 
-    // 从预设 ID 提取索引
+    // 从预设 ID 提取索引（kimi-code 含连字符，模式放最后匹配）
     const match = selectedPresetId.match(
-      /^(claude|codex|gemini|opencode|openclaw|hermes|dsh|zcode)-(\d+)$/,
+      /^(claude|codex|gemini|opencode|openclaw|hermes|dsh|zcode|kimi-code)-(\d+)$/,
     );
     if (!match) return;
 
@@ -96,6 +97,11 @@ export function useProviderCategory({
       }
     } else if (type === "zcode" && appId === "zcode") {
       const preset = zcodeProviderPresets[index];
+      if (preset) {
+        setCategory(preset.category || undefined);
+      }
+    } else if (type === "kimi-code" && appId === "kimi-code") {
+      const preset = kimiCodeProviderPresets[index];
       if (preset) {
         setCategory(preset.category || undefined);
       }

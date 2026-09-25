@@ -49,6 +49,12 @@ impl McpService {
         if prev_apps.zcode && !server.apps.zcode {
             Self::remove_server_from_app(state, &server.id, &AppType::Zcode)?;
         }
+        if prev_apps.kimi_code && !server.apps.kimi_code {
+            Self::remove_server_from_app(state, &server.id, &AppType::KimiCode)?;
+        }
+        if prev_apps.antigravity && !server.apps.antigravity {
+            Self::remove_server_from_app(state, &server.id, &AppType::Antigravity)?;
+        }
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
@@ -149,6 +155,20 @@ impl McpService {
             AppType::Zcode => {
                 mcp::sync_single_server_to_zcode(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::KimiCode => {
+                mcp::sync_single_server_to_kimi_code(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
+            AppType::Antigravity => {
+                mcp::sync_single_server_to_antigravity(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
         }
         Ok(())
     }
@@ -189,6 +209,12 @@ impl McpService {
             }
             AppType::Zcode => {
                 mcp::remove_server_from_zcode(id)?;
+            }
+            AppType::KimiCode => {
+                mcp::remove_server_from_kimi_code(id)?;
+            }
+            AppType::Antigravity => {
+                mcp::remove_server_from_antigravity(id)?;
             }
         }
         Ok(())
@@ -569,6 +595,68 @@ impl McpService {
         Ok(new_count)
     }
 
+    /// 从 Kimi Code 导入 MCP
+    pub fn import_from_kimi_code(state: &AppState) -> Result<usize, AppError> {
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let count = crate::mcp::import_from_kimi_code(&mut temp_config)?;
+
+        let mut new_count = 0;
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    // 已存在：仅启用 kimi_code，不覆盖其他字段
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.kimi_code = true;
+                        merged
+                    } else {
+                        new_count += 1;
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+
+                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
+                }
+            }
+        }
+
+        Ok(new_count)
+    }
+
+    /// 从 Antigravity 导入 MCP
+    pub fn import_from_antigravity(state: &AppState) -> Result<usize, AppError> {
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let count = crate::mcp::import_from_antigravity(&mut temp_config)?;
+
+        let mut new_count = 0;
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    // 已存在：仅启用 antigravity，不覆盖其他字段
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.antigravity = true;
+                        merged
+                    } else {
+                        new_count += 1;
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+
+                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
+                }
+            }
+        }
+
+        Ok(new_count)
+    }
+
     /// 从所有支持 MCP 的应用导入服务器，返回新导入的数量。
     ///
     /// Best-effort：单个应用导入失败（如坏 config.toml）不阻断其余应用；
@@ -579,7 +667,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 7] = [
+        let results: [(&str, Result<usize, AppError>); 9] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -587,6 +675,8 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("dsh", Self::import_from_dsh(state)),
             ("zcode", Self::import_from_zcode(state)),
+            ("kimi-code", Self::import_from_kimi_code(state)),
+            ("antigravity", Self::import_from_antigravity(state)),
         ];
         for (app, result) in results {
             match result {

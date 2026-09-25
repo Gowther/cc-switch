@@ -150,6 +150,11 @@ pub(crate) fn build_provider_from_request(
         AppType::Hermes => build_hermes_settings(request),
         AppType::Dsh => build_dsh_settings(request),
         AppType::Zcode => build_zcode_settings(request),
+        AppType::KimiCode => build_kimi_code_settings(request),
+        AppType::Antigravity => {
+            // Antigravity 不支持供应商管理，不应到达这里（parser 已拦截）
+            build_additive_app_settings(request)
+        }
     };
 
     // Build usage script configuration if provided
@@ -563,6 +568,32 @@ fn build_zcode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!(config)
 }
 
+/// Build settings for Kimi Code (config.toml `[providers."ccs-<id>"]` 形态).
+///
+/// 对齐 config.toml 的 snake_case 原生键名；`type` 默认 "anthropic"
+/// （覆盖面最广的第三方兼容协议），可在 UI 里改。
+fn build_kimi_code_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut config = serde_json::Map::new();
+
+    config.insert("type".to_string(), json!("anthropic"));
+
+    if !endpoint.is_empty() {
+        config.insert("base_url".to_string(), json!(endpoint));
+    }
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("api_key".to_string(), json!(api_key));
+    }
+
+    if let Some(model) = &request.model {
+        config.insert("model".to_string(), json!(model));
+    }
+
+    json!(config)
+}
+
 /// Build Hermes provider settings (snake_case YAML-native fields).
 ///
 /// Hermes' `custom_providers:` entries use `base_url` / `api_key` / `api_mode`
@@ -666,7 +697,7 @@ pub fn parse_and_merge_config(
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "dsh" | "zcode" => {
+        "openclaw" | "opencode" | "hermes" | "dsh" | "zcode" | "kimi-code" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
         "" => {

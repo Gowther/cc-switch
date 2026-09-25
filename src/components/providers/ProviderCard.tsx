@@ -242,13 +242,14 @@ export function ProviderCard({
     (provider.settingsConfig as Record<string, any>)?.config,
   ]);
   // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw/Hermes/DSH/ZCode）：使用 isInConfig 代替 isCurrent
+  // 累加模式应用（OpenCode/OpenClaw/Hermes/DSH/ZCode/Kimi Code）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
     appId === "opencode" ||
     appId === "openclaw" ||
     appId === "hermes" ||
     appId === "dsh" ||
-    appId === "zcode"
+    appId === "zcode" ||
+    appId === "kimi-code"
       ? isInConfig
       : isCurrent;
   const autoQueryInterval =

@@ -466,6 +466,8 @@ describe("useSettings hook", () => {
       hermes: undefined,
       dsh: undefined,
       zcode: undefined,
+      "kimi-code": undefined,
+      antigravity: undefined,
     });
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
   });

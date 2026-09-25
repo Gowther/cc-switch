@@ -22,6 +22,7 @@ import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
 import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
 import type { DshProviderPreset } from "@/config/dshProviderPresets";
 import type { ZcodeProviderPreset } from "@/config/zcodeProviderPresets";
+import type { KimiCodeProviderPreset } from "@/config/kimiCodeProviderPresets";
 import type { ProviderCategory } from "@/types";
 import {
   universalProviderPresets,
@@ -48,7 +49,8 @@ export type AnyPreset =
   | OpenClawProviderPreset
   | HermesProviderPreset
   | DshProviderPreset
-  | ZcodeProviderPreset;
+  | ZcodeProviderPreset
+  | KimiCodeProviderPreset;
 
 export type PresetEntry = {
   id: string;

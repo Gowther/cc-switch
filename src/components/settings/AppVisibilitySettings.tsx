@@ -29,6 +29,8 @@ const APP_CONFIG: Array<{
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
   { id: "dsh", icon: "deepseek", nameKey: "apps.dsh" },
   { id: "zcode", icon: "zhipu", nameKey: "apps.zcode" },
+  { id: "kimi-code", icon: "kimi", nameKey: "apps.kimi-code" },
+  { id: "antigravity", icon: "google", nameKey: "apps.antigravity" },
 ];
 
 export function AppVisibilitySettings({
@@ -47,6 +49,8 @@ export function AppVisibilitySettings({
     hermes: true,
     dsh: false,
     zcode: false,
+    "kimi-code": false,
+    antigravity: false,
   };
 
   // Count how many apps are currently visible
