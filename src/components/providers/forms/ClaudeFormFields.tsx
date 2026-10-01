@@ -581,17 +581,11 @@ export function ClaudeFormFields({
   ];
 
   const handleRoleModelChange = (row: ModelRoleRow, value: string) => {
-    const oldModelBase = stripClaudeOneMMarker(row.model).trim();
     const normalizedValue = row.supportsOneM
       ? value
       : stripClaudeOneMMarker(value);
-    const nextModelBase = stripClaudeOneMMarker(normalizedValue).trim();
-    const displayName = row.displayName?.trim() ?? "";
-    const shouldSyncDisplayName = !displayName || displayName === oldModelBase;
+    // 显示名称不跟随实际请求模型改动，只能手动编辑
     onModelChange(row.modelField, normalizedValue);
-    if (row.displayNameField && shouldSyncDisplayName) {
-      onModelChange(row.displayNameField, nextModelBase);
-    }
   };
 
   const handleRoleOneMChange = (row: ModelRoleRow, enabled: boolean) => {
