@@ -81,10 +81,18 @@ fn parse_provider_deeplink(
     // Validate app type
     if !matches!(
         app.as_str(),
-        "claude" | "codex" | "gemini" | "opencode" | "openclaw" | "hermes"
+        "claude"
+            | "codex"
+            | "gemini"
+            | "opencode"
+            | "openclaw"
+            | "hermes"
+            | "dsh"
+            | "zcode"
+            | "kimi-code"
     ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', 'openclaw', or 'hermes', got '{app}'"
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', 'openclaw', 'hermes', 'dsh', 'zcode', or 'kimi-code', got '{app}'"
         )));
     }
 
@@ -262,10 +270,19 @@ fn parse_mcp_deeplink(
         let trimmed = app.trim();
         if !matches!(
             trimmed,
-            "claude" | "codex" | "gemini" | "opencode" | "openclaw" | "hermes"
+            "claude"
+                | "codex"
+                | "gemini"
+                | "opencode"
+                | "openclaw"
+                | "hermes"
+                | "dsh"
+                | "zcode"
+                | "kimi-code"
+                | "antigravity"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'opencode', 'openclaw', or 'hermes', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'opencode', 'openclaw', 'hermes', 'dsh', 'zcode', 'kimi-code', or 'antigravity', got '{trimmed}'"
             )));
         }
     }

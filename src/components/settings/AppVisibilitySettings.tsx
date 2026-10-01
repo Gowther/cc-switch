@@ -27,6 +27,10 @@ const APP_CONFIG: Array<{
   { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
   { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
+  { id: "dsh", icon: "deepseek", nameKey: "apps.dsh" },
+  { id: "zcode", icon: "zhipu", nameKey: "apps.zcode" },
+  { id: "kimi-code", icon: "kimi", nameKey: "apps.kimi-code" },
+  { id: "antigravity", icon: "google", nameKey: "apps.antigravity" },
 ];
 
 export function AppVisibilitySettings({
@@ -43,6 +47,10 @@ export function AppVisibilitySettings({
     opencode: true,
     openclaw: true,
     hermes: true,
+    dsh: false,
+    zcode: false,
+    "kimi-code": false,
+    antigravity: false,
   };
 
   // Count how many apps are currently visible

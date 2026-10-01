@@ -190,6 +190,30 @@ export const providersApi = {
   },
 
   /**
+   * 获取 DSH live 配置中的供应商 ID 列表
+   * 用于前端判断供应商是否已添加到 DSH 配置
+   */
+  async getDshLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_dsh_live_provider_ids");
+  },
+
+  /**
+   * 获取 ZCode live 配置中的供应商 ID 列表
+   * 用于前端判断供应商是否已添加到 ZCode 配置
+   */
+  async getZcodeLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_zcode_live_provider_ids");
+  },
+
+  /**
+   * 获取 Kimi Code live 配置中的供应商 ID 列表
+   * 用于前端判断供应商是否已添加到 Kimi Code 配置
+   */
+  async getKimiCodeLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_kimi_code_live_provider_ids");
+  },
+
+  /**
    * 从 OpenClaw live 配置导入供应商到数据库
    * OpenClaw 特有功能：由于累加模式，用户可能已在 openclaw.json 中配置供应商
    */
@@ -203,6 +227,30 @@ export const providersApi = {
    */
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
+  },
+
+  /**
+   * 从 DSH live 配置导入供应商到数据库
+   * 由于累加模式，用户可能已在 DSH 配置中配置供应商
+   */
+  async importDshFromLive(): Promise<number> {
+    return await invoke("import_dsh_providers_from_live");
+  },
+
+  /**
+   * 从 ZCode live 配置导入供应商到数据库
+   * 由于累加模式，用户可能已在 ZCode 配置中配置供应商
+   */
+  async importZcodeFromLive(): Promise<number> {
+    return await invoke("import_zcode_providers_from_live");
+  },
+
+  /**
+   * 从 Kimi Code live 配置导入供应商到数据库
+   * 由于累加模式，用户可能已在 Kimi Code 配置中配置供应商
+   */
+  async importKimiCodeFromLive(): Promise<number> {
+    return await invoke("import_kimi_code_providers_from_live");
   },
 };
 

@@ -202,6 +202,14 @@ impl StreamCheckService {
             }
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
+            AppType::Dsh => Self::extract_dsh_base_url(provider),
+            AppType::Zcode => Self::extract_zcode_base_url(provider),
+            AppType::KimiCode => Self::extract_kimi_code_base_url(provider),
+            AppType::Antigravity => Err(AppError::localized(
+                "antigravity.stream_check.unsupported",
+                "Antigravity 不支持供应商测速",
+                "Antigravity does not support provider endpoint checks",
+            )),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
@@ -340,6 +348,58 @@ impl StreamCheckService {
                     "hermes_base_url_missing",
                     "Hermes 供应商缺少 base_url",
                     "Hermes provider is missing `base_url`",
+                )
+            })
+    }
+
+    fn extract_dsh_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("baseURL")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "dsh_base_url_missing",
+                    "dsh 供应商缺少 baseURL",
+                    "dsh provider is missing `baseURL`",
+                )
+            })
+    }
+
+    /// zcode: settings_config 是扁平契约（`baseURL` 顶层），兜底兼容 zcode
+    /// 原生 `options.baseURL` 嵌套形态。
+    fn extract_zcode_base_url(provider: &Provider) -> Result<String, AppError> {
+        let settings = &provider.settings_config;
+        settings
+            .get("baseURL")
+            .or_else(|| settings.get("options").and_then(|o| o.get("baseURL")))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "zcode_base_url_missing",
+                    "zcode 供应商缺少 baseURL",
+                    "zcode provider is missing `baseURL`",
+                )
+            })
+    }
+
+    /// Kimi Code: settings_config 顶层 snake_case `base_url`（对齐 config.toml 原生键名）。
+    fn extract_kimi_code_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "kimi_code_base_url_missing",
+                    "Kimi Code 供应商缺少 base_url",
+                    "Kimi Code provider is missing `base_url`",
                 )
             })
     }

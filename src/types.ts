@@ -293,6 +293,10 @@ export interface VisibleApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  dsh: boolean;
+  zcode: boolean;
+  "kimi-code": boolean;
+  antigravity: boolean;
 }
 
 // WebDAV 同步状态
@@ -410,6 +414,14 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 DSH 配置目录（可选）
+  dshConfigDir?: string;
+  // 覆盖 ZCode 配置目录（可选）
+  zcodeConfigDir?: string;
+  // 覆盖 Kimi Code 配置目录（可选）
+  kimiCodeConfigDir?: string;
+  // 覆盖 Antigravity 配置目录（可选，~/.gemini/config）
+  antigravityConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -501,6 +513,10 @@ export interface McpApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  dsh: boolean;
+  zcode: boolean;
+  "kimi-code": boolean;
+  antigravity: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）

@@ -355,6 +355,10 @@ export function SettingsPage({
                             opencodeDir={settings.opencodeConfigDir}
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
+                            dshDir={settings.dshConfigDir}
+                            zcodeDir={settings.zcodeConfigDir}
+                            kimiCodeDir={settings.kimiCodeConfigDir}
+                            antigravityDir={settings.antigravityConfigDir}
                             onDirectoryChange={updateDirectory}
                             onBrowseDirectory={browseDirectory}
                             onResetDirectory={resetDirectory}

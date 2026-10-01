@@ -148,6 +148,13 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::Dsh => build_dsh_settings(request),
+        AppType::Zcode => build_zcode_settings(request),
+        AppType::KimiCode => build_kimi_code_settings(request),
+        AppType::Antigravity => {
+            // Antigravity 不支持供应商管理，不应到达这里（parser 已拦截）
+            build_additive_app_settings(request)
+        }
     };
 
     // Build usage script configuration if provided
@@ -499,6 +506,94 @@ fn build_additive_app_settings(request: &DeepLinkImportRequest) -> serde_json::V
     json!(config)
 }
 
+/// Build settings for dsh (settings.yaml `llm-pi-ai.providers.<id>`).
+///
+/// Keeps dsh's native field names (`baseURL`, `api`, `models`); `apiKey` stays
+/// in settings_config and is split into `~/.dsh/.credentials.yaml` on live
+/// write. `api` defaults to `openai-completions` (most widely compatible);
+/// users can switch to `anthropic-messages` / `openai-responses` in the UI.
+fn build_dsh_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut config = serde_json::Map::new();
+
+    if !endpoint.is_empty() {
+        config.insert("baseURL".to_string(), json!(endpoint));
+    }
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("apiKey".to_string(), json!(api_key));
+    }
+
+    config.insert("api".to_string(), json!("openai-completions"));
+
+    if let Some(model) = &request.model {
+        config.insert(
+            "models".to_string(),
+            json!([{ "id": model, "name": model }]),
+        );
+    }
+
+    json!(config)
+}
+
+/// Build settings for zcode（`~/.zcode/v2/config.json` 的 `provider.<id>`）。
+///
+/// settings_config 是 cc-switch 侧的扁平契约：`{kind, baseURL, apiKey,
+/// apiKeyRequired?, headers?, models?[]}`；写盘时由 zcode_config 转换为 zcode
+/// 原生嵌套形态（options/models map）。`kind` 默认 `openai-compatible`（最
+/// 广泛兼容）；用户可在 UI 切换 `anthropic` / `openai`。
+fn build_zcode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut config = serde_json::Map::new();
+
+    config.insert("kind".to_string(), json!("openai-compatible"));
+
+    if !endpoint.is_empty() {
+        config.insert("baseURL".to_string(), json!(endpoint));
+    }
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("apiKey".to_string(), json!(api_key));
+    }
+
+    if let Some(model) = &request.model {
+        config.insert(
+            "models".to_string(),
+            json!([{ "id": model, "name": model }]),
+        );
+    }
+
+    json!(config)
+}
+
+/// Build settings for Kimi Code (config.toml `[providers."ccs-<id>"]` 形态).
+///
+/// 对齐 config.toml 的 snake_case 原生键名；`type` 默认 "anthropic"
+/// （覆盖面最广的第三方兼容协议），可在 UI 里改。
+fn build_kimi_code_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut config = serde_json::Map::new();
+
+    config.insert("type".to_string(), json!("anthropic"));
+
+    if !endpoint.is_empty() {
+        config.insert("base_url".to_string(), json!(endpoint));
+    }
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("api_key".to_string(), json!(api_key));
+    }
+
+    if let Some(model) = &request.model {
+        config.insert("model".to_string(), json!(model));
+    }
+
+    json!(config)
+}
+
 /// Build Hermes provider settings (snake_case YAML-native fields).
 ///
 /// Hermes' `custom_providers:` entries use `base_url` / `api_key` / `api_mode`
@@ -602,7 +697,7 @@ pub fn parse_and_merge_config(
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" => {
+        "openclaw" | "opencode" | "hermes" | "dsh" | "zcode" | "kimi-code" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
         "" => {

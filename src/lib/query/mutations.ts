@@ -42,7 +42,14 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (
+        appId === "opencode" ||
+        appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "dsh" ||
+        appId === "zcode" ||
+        appId === "kimi-code"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -95,6 +102,24 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "dsh") {
+        await queryClient.invalidateQueries({
+          queryKey: ["dshLiveProviderIds"],
+        });
+      }
+
+      if (appId === "zcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["zcodeLiveProviderIds"],
+        });
+      }
+
+      if (appId === "kimi-code") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
+        });
       }
 
       try {
@@ -160,6 +185,24 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+
+      if (appId === "dsh") {
+        await queryClient.invalidateQueries({
+          queryKey: ["dshLiveProviderIds"],
+        });
+      }
+
+      if (appId === "zcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["zcodeLiveProviderIds"],
+        });
+      }
+
+      if (appId === "kimi-code") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
+        });
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -215,6 +258,24 @@ export const useDeleteProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "dsh") {
+        await queryClient.invalidateQueries({
+          queryKey: ["dshLiveProviderIds"],
+        });
+      }
+
+      if (appId === "zcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["zcodeLiveProviderIds"],
+        });
+      }
+
+      if (appId === "kimi-code") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
+        });
       }
 
       try {
@@ -289,6 +350,24 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       }
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "dsh") {
+        await queryClient.invalidateQueries({
+          queryKey: ["dshLiveProviderIds"],
+        });
+      }
+
+      if (appId === "zcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["zcodeLiveProviderIds"],
+        });
+      }
+
+      if (appId === "kimi-code") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
+        });
       }
 
       try {

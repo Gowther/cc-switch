@@ -20,6 +20,10 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
+  dshDir?: string;
+  zcodeDir?: string;
+  kimiCodeDir?: string;
+  antigravityDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -37,6 +41,10 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
+  dshDir,
+  zcodeDir,
+  kimiCodeDir,
+  antigravityDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -157,6 +165,50 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("hermes", val)}
           onBrowse={() => onBrowseDirectory("hermes")}
           onReset={() => onResetDirectory("hermes")}
+        />
+
+        <DirectoryInput
+          label={t("settings.dshConfigDir")}
+          description={undefined}
+          value={dshDir}
+          resolvedValue={resolvedDirs.dsh}
+          placeholder={t("settings.browsePlaceholderDsh")}
+          onChange={(val) => onDirectoryChange("dsh", val)}
+          onBrowse={() => onBrowseDirectory("dsh")}
+          onReset={() => onResetDirectory("dsh")}
+        />
+
+        <DirectoryInput
+          label={t("settings.zcodeConfigDir")}
+          description={undefined}
+          value={zcodeDir}
+          resolvedValue={resolvedDirs.zcode}
+          placeholder={t("settings.browsePlaceholderZcode")}
+          onChange={(val) => onDirectoryChange("zcode", val)}
+          onBrowse={() => onBrowseDirectory("zcode")}
+          onReset={() => onResetDirectory("zcode")}
+        />
+
+        <DirectoryInput
+          label={t("settings.kimiCodeConfigDir")}
+          description={t("settings.kimiCodeConfigDirDescription")}
+          value={kimiCodeDir}
+          resolvedValue={resolvedDirs["kimi-code"]}
+          placeholder={t("settings.browsePlaceholderKimiCode")}
+          onChange={(val) => onDirectoryChange("kimi-code", val)}
+          onBrowse={() => onBrowseDirectory("kimi-code")}
+          onReset={() => onResetDirectory("kimi-code")}
+        />
+
+        <DirectoryInput
+          label={t("settings.antigravityConfigDir")}
+          description={t("settings.antigravityConfigDirDescription")}
+          value={antigravityDir}
+          resolvedValue={resolvedDirs.antigravity}
+          placeholder={t("settings.browsePlaceholderAntigravity")}
+          onChange={(val) => onDirectoryChange("antigravity", val)}
+          onBrowse={() => onBrowseDirectory("antigravity")}
+          onReset={() => onResetDirectory("antigravity")}
         />
       </section>
     </div>

@@ -112,6 +112,18 @@ pub fn import_mcp_from_deeplink(
             if target_apps.gemini {
                 merged_apps.gemini = true;
             }
+            if target_apps.dsh {
+                merged_apps.dsh = true;
+            }
+            if target_apps.zcode {
+                merged_apps.zcode = true;
+            }
+            if target_apps.kimi_code {
+                merged_apps.kimi_code = true;
+            }
+            if target_apps.antigravity {
+                merged_apps.antigravity = true;
+            }
 
             McpServer {
                 id: existing.id.clone(),
@@ -168,6 +180,10 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         gemini: false,
         opencode: false,
         hermes: false,
+        dsh: false,
+        zcode: false,
+        kimi_code: false,
+        antigravity: false,
     };
 
     for app in apps_str.split(',') {
@@ -181,6 +197,10 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
                 log::debug!("OpenClaw doesn't support MCP, ignoring in apps parameter");
             }
             "hermes" => apps.hermes = true,
+            "dsh" => apps.dsh = true,
+            "zcode" => apps.zcode = true,
+            "kimi-code" | "kimi_code" => apps.kimi_code = true,
+            "antigravity" => apps.antigravity = true,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "Invalid app in 'apps': {other}"

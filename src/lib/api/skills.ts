@@ -9,7 +9,11 @@ export type AppType =
   | "gemini"
   | "opencode"
   | "openclaw"
-  | "hermes";
+  | "hermes"
+  | "dsh"
+  | "zcode"
+  | "kimi-code"
+  | "antigravity";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -20,6 +24,10 @@ export interface SkillApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  dsh: boolean;
+  zcode: boolean;
+  "kimi-code": boolean;
+  antigravity: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

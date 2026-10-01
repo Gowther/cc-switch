@@ -122,6 +122,10 @@ const UnifiedSkillsPanel = React.forwardRef<
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      dsh: 0,
+      zcode: 0,
+      "kimi-code": 0,
+      antigravity: 0,
     };
     if (!skills) return counts;
     skills.forEach((skill) => {
@@ -749,6 +753,10 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
+          dsh: skill.foundIn.includes("dsh"),
+          zcode: skill.foundIn.includes("zcode"),
+          "kimi-code": skill.foundIn.includes("kimi-code"),
+          antigravity: skill.foundIn.includes("antigravity"),
         },
       ]),
     ),
@@ -775,6 +783,10 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           opencode: false,
           openclaw: false,
           hermes: false,
+          dsh: false,
+          zcode: false,
+          "kimi-code": false,
+          antigravity: false,
         },
       })),
     );
@@ -818,6 +830,10 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           opencode: false,
                           openclaw: false,
                           hermes: false,
+                          dsh: false,
+                          zcode: false,
+                          "kimi-code": false,
+                          antigravity: false,
                         }
                       }
                       onToggle={(app, enabled) => {
@@ -831,6 +847,10 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                               opencode: false,
                               openclaw: false,
                               hermes: false,
+                              dsh: false,
+                              zcode: false,
+                              "kimi-code": false,
+                              antigravity: false,
                             }),
                             [app]: enabled,
                           },
