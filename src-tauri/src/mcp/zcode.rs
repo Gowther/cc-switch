@@ -437,6 +437,8 @@ mod tests {
                     hermes: false,
                     dsh: false,
                     zcode: zcode_enabled,
+                    kimi_code: false,
+                    antigravity: false,
                 },
                 description: None,
                 homepage: None,
