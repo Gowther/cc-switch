@@ -347,6 +347,8 @@ pub fn import_from_zcode(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         hermes: false,
                         dsh: false,
                         zcode: true,
+                        kimi_code: false,
+                        antigravity: false,
                     },
                     description: None,
                     homepage: None,

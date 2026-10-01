@@ -778,13 +778,14 @@ pub fn kimi_code_common_config_applied(snippet: &str) -> bool {
         return false;
     };
 
-    snippet_doc.iter().all(|(key, item)| {
+    let applied = snippet_doc.iter().all(|(key, item)| {
         if is_protected_top_level_key(key) {
             return true;
         }
         doc.get(key)
             .is_some_and(|target_item| toml_contains(target_item, item))
-    })
+    });
+    applied
 }
 
 // ============================================================================

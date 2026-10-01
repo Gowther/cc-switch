@@ -60,7 +60,8 @@ fn create_antigravity_backup(source: &str) -> Result<PathBuf, AppError> {
         .collect::<Vec<_>>();
     if entries.len() > retain {
         entries.sort_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok());
-        for entry in entries.into_iter().take(entries.len() - retain) {
+        let remove_count = entries.len() - retain;
+        for entry in entries.into_iter().take(remove_count) {
             let _ = fs::remove_file(entry.path());
         }
     }

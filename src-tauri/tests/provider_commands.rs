@@ -304,6 +304,8 @@ command = "say"
                 hermes: false,
                 dsh: false,
                 zcode: false,
+                kimi_code: false,
+                antigravity: false,
             },
             description: None,
             homepage: None,

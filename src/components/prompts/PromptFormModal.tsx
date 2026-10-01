@@ -42,7 +42,12 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
     hermes: "AGENTS.md",
   };
   const filename =
-    filenameMap[appId as Exclude<AppId, "openclaw" | "dsh" | "zcode">];
+    filenameMap[
+      appId as Exclude<
+        AppId,
+        "openclaw" | "dsh" | "zcode" | "kimi-code" | "antigravity"
+      >
+    ];
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
