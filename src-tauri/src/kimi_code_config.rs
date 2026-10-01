@@ -30,7 +30,6 @@ use crate::error::AppError;
 use crate::settings::effective_backup_retain_count;
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -279,11 +278,11 @@ fn provider_id_from_alias(alias: &str) -> Option<&str> {
     alias.strip_prefix(MODEL_PREFIX)
 }
 
-fn providers_table<'a>(doc: &'a DocumentMut) -> Option<&'a Table> {
+fn providers_table(doc: &DocumentMut) -> Option<&Table> {
     doc.get("providers").and_then(Item::as_table)
 }
 
-fn models_table<'a>(doc: &'a DocumentMut) -> Option<&'a Table> {
+fn models_table(doc: &DocumentMut) -> Option<&Table> {
     doc.get("models").and_then(Item::as_table)
 }
 

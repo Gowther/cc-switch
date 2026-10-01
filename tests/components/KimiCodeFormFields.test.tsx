@@ -133,12 +133,12 @@ describe("KimiCodeFormFields", () => {
 
     await user.click(
       screen.getByRole("option", {
-        name: "kimiCode.form.typeOpenaiCompatible",
+        name: "kimiCode.form.typeOpenaiResponses",
       }),
     );
 
     await waitFor(() => {
-      expect(readSettingsConfig().type).toBe("openai");
+      expect(readSettingsConfig().type).toBe("openai_responses");
     });
   });
 

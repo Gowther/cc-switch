@@ -17,7 +17,7 @@
 use crate::config::atomic_write;
 use crate::error::AppError;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 // ============================================================================
