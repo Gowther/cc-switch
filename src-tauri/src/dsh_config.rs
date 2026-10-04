@@ -1,26 +1,46 @@
-//! dsh（DeepSeek Harness）配置文件读写模块
+//! dsh（DeepSeek Harness）配置读写模块（cordis.patch.yml 版）
 //!
-//! 处理 `$DSH_HOME`（默认 `~/.dsh`，解析见 `crate::settings::get_dsh_dir`）下
-//! 两个 YAML 文件的读写。dsh 对两个文件均有 watcher，外部写入热生效。
+//! 当前 dsh 把供应商/默认模型等 live 配置存在**每个 profile 的**
+//! `~/.dsh/profiles/<profile>/cordis.patch.yml`（id 定向 patch 条目），
+//! 不再使用 `~/.dsh/settings.yaml`（老版本会迁移走，留下
+//! `settings.yaml.imported`）。凭据仍是 home 级全局文件
+//! `~/.dsh/.credentials.yaml`（0600）。
 //!
-//! ## `settings.yaml`（settings namespace → 分节 的 map）
+//! ## cordis.patch.yml 条目形态（dsh Web UI 自己写的就是这种）
 //!
 //! ```yaml
-//! llm-pi-ai:
-//!   providers:
-//!     my-gateway:
-//!       apiKeyEnv: DSH_MY_GATEWAY_API_KEY   # 凭据引用名，密钥绝不落此文件
-//!       api: openai-completions             # 仅 openai-completions / openai-responses / anthropic-messages
-//!       baseURL: https://gateway.example/v1
-//!       models:
-//!         - id: my-model
-//!           name: My Model
+//! - id: llm-pi-ai
+//!   name: '@deepseek-ai/dsh-llm-pi-ai'
+//!   config:
+//!     providers:
+//!       my-gateway:
+//!         apiKeyEnv: DSH_MY_GATEWAY_API_KEY   # 凭据引用名，密钥绝不落此文件
+//!         api: openai-completions             # 仅 openai-completions / openai-responses / anthropic-messages
+//!         baseURL: https://gateway.example/v1
+//!         models:
+//!           - id: my-model
+//!             name: My Model
 //!
-//! agent-default-model:                      # 当前供应商/模型
-//!   provider: my-gateway
-//!   model: my-model
-//!   reasoningEffort: high                   # 可选
+//! - id: agent-default-model
+//!   name: '@deepseek-ai/dsh-agent-default-model'
+//!   config:
+//!     provider: my-gateway                    # 当前供应商/模型
+//!     model: my-model
+//!     reasoningEffort: high                   # 可选
 //! ```
+//!
+//! ## 写入策略
+//!
+//! - 供应商、默认模型、通用配置：写入**每个已有 profile** 的
+//!   `cordis.patch.yml`（对齐 dsh UI「写进 active profile」的语义，且
+//!   cc-switch 的供应商天然是全局概念）；一个 profile 都没有时（dsh 尚未
+//!   运行过）回退写 home 级 `~/.dsh/cordis.patch.yml`（dsh 文档确认 home 级
+//!   对所有 profile 生效）。
+//! - 一个条目块内只改 `config.providers` / `agent-default-model` 的 config，
+//!   条目级其他键（含 `name`）与其他条目块（含 `!!js` 值）逐字保留。
+//! - 文本级条目块切分/重组复用 `mcp::dsh` 的共享原语（`split_entry_blocks` /
+//!   `assemble_patch_text` / `parse_block_entry`）——serde_yaml 在 Value 层
+//!   会丢 `!!js` 标签，非目标块绝不参与 Value 往返。
 //!
 //! ## `.credentials.yaml`（POSIX 下必须 0600）
 //!
@@ -38,15 +58,9 @@
 //!
 //! 键名与 dsh YAML 原生名一致（`api` / `baseURL` / `models[]` / `compat{}`
 //! 等，外加可选 passthrough 字段原样透传）。唯一的例外是 cc-switch 私有键
-//! `apiKey`：写入 dsh 时拆出到 `.credentials.yaml` 的 `refs`，settings.yaml
+//! `apiKey`：写入 dsh 时拆出到 `.credentials.yaml` 的 `refs`，patch 条目里
 //! 只写 `apiKeyEnv: <引用名>`；从 dsh 读入时反向物化（refs 取回密钥填回
 //! `apiKey`，并保留 `apiKeyEnv` 键）。
-//!
-//! 与 hermes_config 的差异：dsh 的 settings.yaml 由 dsh 自身程序化生成
-//! （无注释保留需求），且 provider 路径是嵌套 mapping（非扁平分节），
-//! 因此本模块采用 整文档 read-modify-write（Value 级深合并 + 整体序列化），
-//! 不复用 hermes 的文本级分节替换与顶层键去重逻辑；备份策略、写锁、
-//! `atomic_write` 与保留数量（`effective_backup_retain_count`）完全对齐。
 
 use crate::config::{atomic_write, get_app_config_dir};
 use crate::error::AppError;
@@ -57,23 +71,73 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-/// settings.yaml 中 provider 所在的 settings namespace
-const LLM_PI_AI_KEY: &str = "llm-pi-ai";
-/// settings.yaml 中当前供应商/模型所在的 settings namespace
-const DEFAULT_MODEL_KEY: &str = "agent-default-model";
+/// cordis.patch.yml 中 provider 所在的 patch 条目 id / 插件名
+const LLM_PI_AI_ENTRY_ID: &str = "llm-pi-ai";
+const LLM_PI_AI_PLUGIN: &str = "@deepseek-ai/dsh-llm-pi-ai";
+/// 默认模型 patch 条目 id / 插件名
+const DEFAULT_MODEL_ENTRY_ID: &str = "agent-default-model";
+const DEFAULT_MODEL_PLUGIN: &str = "@deepseek-ai/dsh-agent-default-model";
 
 // ============================================================================
 // Path Functions
 // ============================================================================
 
-/// 获取 dsh `settings.yaml` 路径（`<dsh_dir>/settings.yaml`）
-pub fn get_dsh_settings_path() -> PathBuf {
-    get_dsh_dir().join("settings.yaml")
-}
-
-/// 获取 dsh `.credentials.yaml` 路径（`<dsh_dir>/.credentials.yaml`）
+/// 获取 dsh 凭据文件路径（`<dsh_dir>/.credentials.yaml`）
 pub fn get_dsh_credentials_path() -> PathBuf {
     get_dsh_dir().join(".credentials.yaml")
+}
+
+/// home 级 patch 文件（`~/.dsh/cordis.patch.yml`，对所有 profile 生效）
+pub fn get_dsh_home_patch_path() -> PathBuf {
+    get_dsh_dir().join("cordis.patch.yml")
+}
+
+/// 所有已有 profile 的 cordis.patch.yml 路径（profiles 目录下每个子目录
+/// 都算一个 profile，patch 文件可尚不存在）。一个 profile 都没有时返回空表。
+pub fn get_dsh_profile_patch_paths() -> Vec<PathBuf> {
+    let profiles_dir = get_dsh_dir().join("profiles");
+    let mut paths = Vec::new();
+    if let Ok(entries) = fs::read_dir(&profiles_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                paths.push(path.join("cordis.patch.yml"));
+            }
+        }
+    }
+    paths.sort();
+    paths
+}
+
+/// 写入目标 patch 文件列表：所有已有 profile；没有 profile 时回退 home 级。
+fn patch_write_targets() -> Vec<PathBuf> {
+    let profiles = get_dsh_profile_patch_paths();
+    if profiles.is_empty() {
+        vec![get_dsh_home_patch_path()]
+    } else {
+        profiles
+    }
+}
+
+/// 读取目标 patch 文件列表：所有已存在的 profile patch + home 级（若存在）。
+fn patch_read_sources() -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = get_dsh_profile_patch_paths()
+        .into_iter()
+        .filter(|p| p.exists())
+        .collect();
+    let home = get_dsh_home_patch_path();
+    if home.exists() {
+        paths.push(home);
+    }
+    paths
+}
+
+/// dsh 是否已有任何形式的配置文件（任一 profile 的 patch / home patch /
+/// 旧版 settings.yaml）
+pub fn dsh_has_any_config() -> bool {
+    get_dsh_home_patch_path().exists()
+        || get_dsh_profile_patch_paths().iter().any(|p| p.exists())
+        || get_dsh_dir().join("settings.yaml").exists()
 }
 
 fn dsh_write_lock() -> &'static Mutex<()> {
@@ -93,104 +157,35 @@ pub struct DshWriteOutcome {
     pub backup_path: Option<String>,
 }
 
-/// `agent-default-model` 分节（当前供应商/模型）
+/// dsh 默认模型（agent-default-model 条目）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DshDefaultModel {
     pub provider: String,
     pub model: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
-}
-
-// ============================================================================
-// Core YAML Read/Write
-// ============================================================================
-
-/// 读取 dsh `settings.yaml` 为 serde_yaml::Value
-///
-/// 文件不存在、为空或只含注释（解析为 Null）时返回空 Mapping；
-/// 解析错误报 `AppError::Config`。
-pub fn read_dsh_settings() -> Result<serde_yaml::Value, AppError> {
-    let path = get_dsh_settings_path();
-    if !path.exists() {
-        return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-    }
-
-    let content = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
-    if content.trim().is_empty() {
-        return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-    }
-
-    let value: serde_yaml::Value = serde_yaml::from_str(&content)
-        .map_err(|e| AppError::Config(format!("Failed to parse dsh settings.yaml as YAML: {e}")))?;
-    Ok(match value {
-        serde_yaml::Value::Null => serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
-        other => other,
-    })
-}
-
-/// 写入 dsh `settings.yaml`（写锁 + 写前备份 + atomic_write）
-///
-/// 内容与磁盘一致时 no-op（不备份、不写盘）。
-pub fn write_dsh_settings(value: &serde_yaml::Value) -> Result<DshWriteOutcome, AppError> {
-    let _guard = dsh_write_lock().lock()?;
-    write_dsh_settings_locked(value)
-}
-
-/// Inner write helper — caller must already hold the write lock.
-fn write_dsh_settings_locked(value: &serde_yaml::Value) -> Result<DshWriteOutcome, AppError> {
-    let path = get_dsh_settings_path();
-    let raw = if path.exists() {
-        fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?
-    } else {
-        String::new()
-    };
-
-    let serialized = serde_yaml::to_string(value)
-        .map_err(|e| AppError::Config(format!("Failed to serialize dsh settings.yaml: {e}")))?;
-
-    if serialized == raw {
-        return Ok(DshWriteOutcome::default());
-    }
-
-    let backup_path = if !raw.is_empty() {
-        Some(create_dsh_backup("settings", &raw)?)
-    } else {
-        None
-    };
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-    }
-
-    atomic_write(&path, serialized.as_bytes())?;
-
-    log::debug!("dsh settings.yaml written to {:?}", path);
-    Ok(DshWriteOutcome {
-        backup_path: backup_path.map(|p| p.display().to_string()),
-    })
 }
 
 // ============================================================================
 // Backup & Cleanup
 // ============================================================================
 
-/// 备份策略完全复用 hermes_config 的做法：时间戳命名、同秒冲突追加计数后缀、
-/// 写后备份清理。文件为 `<cc-switch 配置目录>/backups/dsh/dsh_{kind}_*.yaml`，
-/// `kind` 区分 settings / credentials / cordis（`cordis.patch.yml`，见
-/// `mcp::dsh`），清理按 kind 分别计数。
+/// 备份策略对齐 hermes_config：时间戳命名、同秒冲突追加计数后缀、写后清理。
+/// 文件为 `<cc-switch 配置目录>/backups/dsh/dsh_{kind}_*`，`kind` 区分
+/// patch（cordis.patch.yml）/ credentials（.credentials.yaml），分别计数。
 pub(crate) fn create_dsh_backup(kind: &str, source: &str) -> Result<PathBuf, AppError> {
     let backup_dir = get_app_config_dir().join("backups").join("dsh");
     fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
     let base_id = format!("dsh_{kind}_{}", Local::now().format("%Y%m%d_%H%M%S"));
-    let mut filename = format!("{base_id}.yaml");
+    let ext = if kind == "credentials" { "yaml" } else { "yml" };
+    let mut filename = format!("{base_id}.{ext}");
     let mut backup_path = backup_dir.join(&filename);
     let mut counter = 1;
 
     while backup_path.exists() {
-        filename = format!("{base_id}_{counter}.yaml");
+        filename = format!("{base_id}_{counter}.{ext}");
         backup_path = backup_dir.join(&filename);
         counter += 1;
     }
@@ -207,12 +202,10 @@ fn cleanup_dsh_backups(dir: &Path, kind: &str) -> Result<(), AppError> {
         .map_err(|e| AppError::io(dir, e))?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
-            entry.file_name().to_string_lossy().starts_with(&prefix)
-                && entry
-                    .path()
-                    .extension()
-                    .map(|ext| ext == "yaml" || ext == "yml")
-                    .unwrap_or(false)
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(prefix.as_str())
         })
         .collect::<Vec<_>>();
 
@@ -235,48 +228,179 @@ fn cleanup_dsh_backups(dir: &Path, kind: &str) -> Result<(), AppError> {
 }
 
 // ============================================================================
-// YAML Value Helpers
+// cordis.patch.yml 文本级块 IO（复用 mcp::dsh 的切分/重组原语）
 // ============================================================================
 
-/// 取 settings.yaml 顶层的可变 Mapping；Null 归一化为空 Mapping。
-/// 顶层是其他非标量类型（配置已损坏，dsh 自身也无法加载）时报 Config
-/// 错误而不是覆盖，避免误毁用户数据。
-fn settings_root_mut(value: &mut serde_yaml::Value) -> Result<&mut serde_yaml::Mapping, AppError> {
-    if value.is_null() {
-        *value = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+use crate::mcp::dsh::{assemble_patch_text, parse_block_entry, split_entry_blocks};
+
+/// 读取 patch 文件为 (preamble, 条目块原文列表)；文件不存在/空 → 空
+fn read_patch_file(path: &Path) -> Result<(String, Vec<String>), AppError> {
+    if !path.exists() {
+        return Ok((String::new(), Vec::new()));
     }
-    match value {
-        serde_yaml::Value::Mapping(mapping) => Ok(mapping),
-        _ => Err(AppError::Config(
-            "dsh settings.yaml top level must be a mapping".to_string(),
-        )),
+    let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+    if content.trim().is_empty() {
+        return Ok((String::new(), Vec::new()));
     }
+    split_entry_blocks(&content)
 }
 
-/// 取 `parent[key]` 的可变 Mapping；缺失时新建，存在但不是 Mapping
-/// （损坏/旧格式）时告警并重建为空 Mapping。
-fn ensure_child_mapping<'a>(
-    parent: &'a mut serde_yaml::Mapping,
-    key: &str,
-) -> &'a mut serde_yaml::Mapping {
-    let yaml_key = serde_yaml::Value::String(key.to_string());
-    let needs_reset = match parent.get(&yaml_key) {
-        Some(value) => !value.is_mapping(),
-        None => true,
-    };
-    if needs_reset {
-        if parent.contains_key(&yaml_key) {
-            log::warn!("dsh settings.yaml: '{key}' is not a mapping, resetting");
+/// 写回 patch 文件（写前备份 + atomic_write；内容一致时 no-op；
+/// 空内容且文件不存在时不创建）
+fn write_patch_file(
+    path: &Path,
+    preamble: &str,
+    blocks: &[String],
+) -> Result<Option<PathBuf>, AppError> {
+    let serialized = assemble_patch_text(preamble, blocks);
+
+    if path.exists() {
+        let existing = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+        if existing == serialized {
+            return Ok(None);
         }
-        parent.insert(
-            yaml_key.clone(),
+        let backup = create_dsh_backup("patch", &existing)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        }
+        atomic_write(path, serialized.as_bytes())?;
+        return Ok(Some(backup));
+    }
+
+    if serialized.trim().is_empty() {
+        return Ok(None);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    atomic_write(path, serialized.as_bytes())?;
+    Ok(None)
+}
+
+/// 条目块是否是指定 id 的**定向 patch 条目**（非 insert 条目）
+fn block_is_config_entry(block_text: &str, entry_id: &str) -> bool {
+    let Some(entry) = parse_block_entry(block_text) else {
+        return false;
+    };
+    entry.get("insert").is_none() && entry.get("id").and_then(|v| v.as_str()) == Some(entry_id)
+}
+
+/// 把定向 patch 条目序列化为块文本（`- id: ...` 起，无尾换行）
+fn serialize_config_entry(entry: &serde_yaml::Value) -> Result<String, AppError> {
+    let text = serde_yaml::to_string(&serde_yaml::Value::Sequence(vec![entry.clone()]))
+        .map_err(|e| AppError::Config(format!("Failed to serialize dsh patch entry: {e}")))?;
+    Ok(text.trim_end().to_string())
+}
+
+/// 取定向条目的 config 可变引用
+fn entry_config_mut<'a>(
+    entry: &'a mut serde_yaml::Value,
+) -> Result<&'a mut serde_yaml::Mapping, AppError> {
+    let map = entry
+        .as_mapping_mut()
+        .ok_or_else(|| AppError::Config("dsh patch entry must be a mapping".to_string()))?;
+    let config_key = serde_yaml::Value::String("config".to_string());
+    if !map.contains_key(&config_key) {
+        map.insert(
+            config_key.clone(),
             serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
         );
     }
-    match parent.get_mut(&yaml_key) {
-        Some(serde_yaml::Value::Mapping(mapping)) => mapping,
-        _ => unreachable!("just inserted a mapping"),
+    map.get_mut(&config_key)
+        .and_then(|v| v.as_mapping_mut())
+        .ok_or_else(|| AppError::Config("dsh patch entry config must be a mapping".to_string()))
+}
+
+/// 在单个 patch 文件里 upsert/删除某个定向条目的"config 变换"
+///
+/// `entry_id`：条目 id（llm-pi-ai / agent-default-model）
+/// `plugin`：新建条目时写入的 name 字段
+/// `f`：对条目 config 的就地修改；返回 false 表示"该文件无此条目且无需创建"
+/// （remove 路径），true 表示已修改/已创建。
+/// 删除语义：若修改后条目只剩 id/name/空 config，则整块移除。
+fn update_config_entry_in_file(
+    path: &Path,
+    entry_id: &str,
+    plugin: &str,
+    f: impl FnOnce(&mut serde_yaml::Mapping) -> Result<bool, AppError>,
+) -> Result<bool, AppError> {
+    let (preamble, mut blocks) = read_patch_file(path)?;
+
+    for block in blocks.iter_mut() {
+        if !block_is_config_entry(block, entry_id) {
+            continue;
+        }
+        // 解析 → 改 → 重序列化该块（其余块原文不动，含 !!js 的用户条目安全）
+        let mut entry = parse_block_entry(block).expect("block_is_config_entry checked");
+        let changed = {
+            let config = entry_config_mut(&mut entry)?;
+            f(config)?
+        };
+        if !changed {
+            return Ok(false);
+        }
+        // 条目空了（config 清空）→ 整块移除
+        let config_empty = entry
+            .get("config")
+            .and_then(|v| v.as_mapping())
+            .map(|m| m.is_empty())
+            .unwrap_or(true);
+        if config_empty {
+            block.clear();
+        } else {
+            *block = serialize_config_entry(&entry)?;
+        }
+        blocks.retain(|b| !b.is_empty());
+        write_patch_file(path, &preamble, &blocks)?;
+        return Ok(true);
     }
+
+    // 条目不存在：按 f 在新建条目上执行（f 自行决定是否有效）
+    let mut entry = serde_yaml::Mapping::new();
+    entry.insert(
+        serde_yaml::Value::String("id".to_string()),
+        serde_yaml::Value::String(entry_id.to_string()),
+    );
+    entry.insert(
+        serde_yaml::Value::String("name".to_string()),
+        serde_yaml::Value::String(plugin.to_string()),
+    );
+    let mut value = serde_yaml::Value::Mapping(entry);
+    let changed = {
+        let config = entry_config_mut(&mut value)?;
+        f(config)?
+    };
+    if !changed {
+        return Ok(false);
+    }
+    let config_empty = value
+        .get("config")
+        .and_then(|v| v.as_mapping())
+        .map(|m| m.is_empty())
+        .unwrap_or(true);
+    if config_empty {
+        return Ok(false);
+    }
+    blocks.push(serialize_config_entry(&value)?);
+    write_patch_file(path, &preamble, &blocks)?;
+    Ok(true)
+}
+
+/// 读取所有 patch 源里某条目的 config（首个命中的 profile 优先，home 兜底）
+fn read_entry_config_from_sources(entry_id: &str) -> Result<Option<serde_yaml::Mapping>, AppError> {
+    for path in patch_read_sources() {
+        let (_preamble, blocks) = read_patch_file(&path)?;
+        for block in &blocks {
+            if block_is_config_entry(block, entry_id) {
+                let entry = parse_block_entry(block).expect("checked");
+                if let Some(config) = entry.get("config").and_then(|v| v.as_mapping()) {
+                    return Ok(Some(config.clone()));
+                }
+                return Ok(Some(serde_yaml::Mapping::new()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 // ============================================================================
@@ -388,7 +512,21 @@ fn set_credentials_permissions(_path: &Path) -> Result<(), AppError> {
 }
 
 // ============================================================================
-// Provider Functions
+// YAML <-> JSON helpers
+// ============================================================================
+
+pub(crate) fn yaml_to_json(yaml: &serde_yaml::Value) -> Result<serde_json::Value, AppError> {
+    serde_json::to_value(yaml)
+        .map_err(|e| AppError::Config(format!("Failed to convert dsh YAML value to JSON: {e}")))
+}
+
+pub(crate) fn json_to_yaml(json: &serde_json::Value) -> Result<serde_yaml::Value, AppError> {
+    serde_yaml::to_value(json)
+        .map_err(|e| AppError::Config(format!("Failed to convert JSON value to dsh YAML: {e}")))
+}
+
+// ============================================================================
+// Provider Functions（写入所有已有 profile 的 cordis.patch.yml）
 // ============================================================================
 
 /// 由 provider key 生成凭据引用名：`DSH_<PROVIDER_KEY>_API_KEY`
@@ -431,55 +569,84 @@ fn materialize_api_key(config: &mut serde_json::Value, refs: &serde_yaml::Mappin
     );
 }
 
-/// 获取全部供应商（`llm-pi-ai.providers`），每项 YAML → JSON，
-/// 并从 `.credentials.yaml` 的 `refs` 物化 `apiKey`（保留 `apiKeyEnv` 键）。
-pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, AppError> {
-    let settings = read_dsh_settings()?;
-    let refs = read_credentials_refs()?;
-    let mut map = serde_json::Map::new();
-
-    let Some(providers) = settings
-        .get(LLM_PI_AI_KEY)
-        .and_then(|v| v.get("providers"))
-        .and_then(|v| v.as_mapping())
-    else {
-        return Ok(map);
-    };
-
-    for (key, value) in providers {
-        let Some(key_str) = key.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+/// 从一份 patch 源的 llm-pi-ai 条目读出 providers（合并进 out；后读的
+/// 同名 key 覆盖先读的——home 级 patch 最后读、优先级最高，与 dsh 的层叠
+/// 语义一致）。
+fn collect_providers_from_sources(
+    out: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<(), AppError> {
+    for path in patch_read_sources() {
+        let Some(config) = read_entry_config_from_sources_at(&path, LLM_PI_AI_ENTRY_ID)? else {
             continue;
         };
-        if !value.is_mapping() {
-            log::debug!("Skipping dsh providers['{key_str}']: not a mapping");
+        let Some(providers) = config.get("providers").and_then(|v| v.as_mapping()) else {
             continue;
-        }
-        match yaml_to_json(value) {
-            Ok(mut json_val) => {
-                materialize_api_key(&mut json_val, &refs);
-                map.insert(key_str.to_string(), json_val);
+        };
+        for (key, value) in providers {
+            let Some(key_str) = key.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            if !value.is_mapping() {
+                log::debug!("Skipping dsh providers['{key_str}']: not a mapping");
+                continue;
             }
-            Err(e) => {
-                log::warn!("Failed to convert dsh provider '{key_str}' to JSON: {e}");
+            match yaml_to_json(value) {
+                Ok(json_val) => {
+                    out.insert(key_str.to_string(), json_val);
+                }
+                Err(err) => {
+                    log::warn!(
+                        "Skipping dsh provider '{key_str}' in {}: {err}",
+                        path.display()
+                    );
+                }
             }
         }
     }
+    Ok(())
+}
 
+fn read_entry_config_from_sources_at(
+    path: &Path,
+    entry_id: &str,
+) -> Result<Option<serde_yaml::Mapping>, AppError> {
+    let (_preamble, blocks) = read_patch_file(path)?;
+    for block in &blocks {
+        if block_is_config_entry(block, entry_id) {
+            let entry = parse_block_entry(block).expect("checked");
+            if let Some(config) = entry.get("config").and_then(|v| v.as_mapping()) {
+                return Ok(Some(config.clone()));
+            }
+            return Ok(Some(serde_yaml::Mapping::new()));
+        }
+    }
+    Ok(None)
+}
+
+/// 获取全部供应商（所有 patch 源的 `llm-pi-ai` 条目 config.providers 合并），
+/// 每项 YAML → JSON，并从 `.credentials.yaml` 的 `refs` 物化 `apiKey`
+/// （保留 `apiKeyEnv` 键）。
+pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, AppError> {
+    let mut map = serde_json::Map::new();
+    collect_providers_from_sources(&mut map)?;
+    let refs = read_credentials_refs()?;
+    for value in map.values_mut() {
+        materialize_api_key(value, &refs);
+    }
     Ok(map)
 }
 
-/// 获取单个供应商
+/// 获取单个供应商（不存在返回 Ok(None)）
 pub fn get_provider(key: &str) -> Result<Option<serde_json::Value>, AppError> {
-    Ok(get_providers()?.get(key).cloned())
+    Ok(get_providers()?.remove(key))
 }
 
-/// Upsert `llm-pi-ai.providers.<key>`。
+/// Upsert 供应商：写入所有已有 profile 的 cordis.patch.yml（无 profile 时
+/// 回退 home 级 `~/.dsh/cordis.patch.yml`）。
 ///
-/// `apiKey` 是 cc-switch 私有键：取出后写入 `.credentials.yaml` 的 `refs`
-/// （键 = `apiKeyEnv`，配置未提供时按 provider key 生成），settings.yaml
-/// 只写 `apiKeyEnv: <引用名>`；其余键原样 JSON → YAML 透传。
-///
-/// 整个读-改-写在写锁内完成，避免 TOCTOU。
+/// settings_config（JSON）→ `llm-pi-ai` 条目 `config.providers.<key>`：
+/// `apiKey` 拆出写入 `.credentials.yaml` 的 `refs`（条目里只留 `apiKeyEnv`
+/// 引用名）；其余键原样透传。盘上该 provider 已有条目的未知字段保留。
 pub fn set_provider(
     key: &str,
     provider_config: serde_json::Value,
@@ -488,7 +655,7 @@ pub fn set_provider(
 
     let mut normalized = provider_config;
 
-    // 拆出 cc-switch 私有的 apiKey —— 密钥绝不写进 settings.yaml
+    // 拆出 cc-switch 私有的 apiKey —— 密钥绝不写进 patch 文件
     let api_key = normalized
         .as_object_mut()
         .and_then(|obj| obj.remove("apiKey"))
@@ -521,215 +688,247 @@ pub fn set_provider(
             serde_json::Value::String(env_name.clone()),
         );
     }
-    let mut yaml_val = json_to_yaml(&normalized)?;
+    let provider_yaml = json_to_yaml(&normalized)?;
 
-    let mut settings = read_dsh_settings()?;
-    let root = settings_root_mut(&mut settings)?;
-    let providers = {
-        let llm = ensure_child_mapping(root, LLM_PI_AI_KEY);
-        ensure_child_mapping(llm, "providers")
-    };
-    let yaml_key = serde_yaml::Value::String(key.to_string());
-
-    if let Some(existing) = providers.get_mut(&yaml_key) {
-        // Forward-compat：保留盘上存在但本次 payload 未提交的字段（dsh 可选
-        // 字段很多，用户可能经 dsh 自己的 UI 设置过 retryPolicy / timeoutMs 等）
-        if let (Some(existing_map), serde_yaml::Value::Mapping(new_map)) =
-            (existing.as_mapping(), &mut yaml_val)
-        {
-            for (k, v) in existing_map {
-                new_map.entry(k.clone()).or_insert_with(|| v.clone());
+    let mut backup_path = None;
+    for path in patch_write_targets() {
+        let provider_yaml = provider_yaml.clone();
+        let key_string = key.to_string();
+        update_config_entry_in_file(&path, LLM_PI_AI_ENTRY_ID, LLM_PI_AI_PLUGIN, move |config| {
+            // 取/建 config.providers map
+            let providers_key = serde_yaml::Value::String("providers".to_string());
+            if !config.contains_key(&providers_key) {
+                config.insert(
+                    providers_key.clone(),
+                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+                );
             }
+            let providers = config
+                .get_mut(&providers_key)
+                .and_then(|v| v.as_mapping_mut())
+                .ok_or_else(|| {
+                    AppError::Config("dsh llm-pi-ai config.providers must be a mapping".to_string())
+                })?;
+
+            let yaml_key = serde_yaml::Value::String(key_string);
+            // forward-compat：保留盘上该 provider 条目里本次未提交的字段
+            if let (serde_yaml::Value::Mapping(new_map), Some(existing_map)) = (
+                &provider_yaml,
+                providers.get(&yaml_key).and_then(|v| v.as_mapping()),
+            ) {
+                let mut merged = new_map.clone();
+                for (k, v) in existing_map {
+                    merged.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+                providers.insert(yaml_key, serde_yaml::Value::Mapping(merged));
+                return Ok(true);
+            }
+            providers.insert(yaml_key, provider_yaml);
+            Ok(true)
+        })?;
+        if backup_path.is_none() {
+            // 记录首个写盘的备份（update_config_entry_in_file 内部已备份；
+            // 这里只记录路径存在性用于 outcome——精确路径由调用方日志查看）
+            backup_path = Some(path);
         }
-        *existing = yaml_val;
-    } else {
-        providers.insert(yaml_key, yaml_val);
     }
 
-    write_dsh_settings_locked(&settings)
+    Ok(DshWriteOutcome {
+        backup_path: backup_path.map(|p| p.display().to_string()),
+    })
 }
 
-/// 删除 `llm-pi-ai.providers.<key>`（不存在时 no-op）。
+/// 删除 `llm-pi-ai.providers.<key>`（所有 patch 目标；不存在时 no-op）。
 ///
 /// 若该 provider 的 `apiKeyEnv` 引用名没有被其他 provider 引用，
 /// 连同 `.credentials.yaml` 的 `refs` 条目一起删除。
 pub fn remove_provider(key: &str) -> Result<DshWriteOutcome, AppError> {
     let _guard = dsh_write_lock().lock()?;
 
-    let mut settings = read_dsh_settings()?;
-    let root = settings_root_mut(&mut settings)?;
+    // 先收集该 provider 用过的引用名（删除后查不到了）
+    let removed_env_name = get_provider(key)?
+        .and_then(|config| config.get("apiKeyEnv").cloned())
+        .and_then(|v| v.as_str().map(str::to_string));
 
-    let yaml_key = serde_yaml::Value::String(key.to_string());
-    let removed = {
-        let Some(providers) = root
-            .get_mut(LLM_PI_AI_KEY)
-            .and_then(|v| v.as_mapping_mut())
-            .and_then(|llm| llm.get_mut("providers"))
-            .and_then(|v| v.as_mapping_mut())
-        else {
-            return Ok(DshWriteOutcome::default());
-        };
-        let Some(existing) = providers.get(&yaml_key) else {
-            return Ok(DshWriteOutcome::default());
-        };
-        let env_name = existing
-            .get("apiKeyEnv")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        providers.remove(yaml_key);
-        // 删除后仍引用同一 apiKeyEnv 的其他 provider
-        let still_used = env_name.as_ref().map(|name| {
-            providers
-                .iter()
-                .any(|(_, v)| v.get("apiKeyEnv").and_then(|x| x.as_str()) == Some(name.as_str()))
-        });
-        (env_name, still_used)
-    };
+    let mut backup_path = None;
+    for path in patch_write_targets() {
+        let key_string = key.to_string();
+        let changed = update_config_entry_in_file(
+            &path,
+            LLM_PI_AI_ENTRY_ID,
+            LLM_PI_AI_PLUGIN,
+            move |config| {
+                let Some(providers) = config
+                    .get_mut(serde_yaml::Value::String("providers".to_string()))
+                    .and_then(|v| v.as_mapping_mut())
+                else {
+                    return Ok(false);
+                };
+                let removed = providers
+                    .remove(serde_yaml::Value::String(key_string))
+                    .is_some();
+                Ok(removed)
+            },
+        )?;
+        if changed && backup_path.is_none() {
+            backup_path = Some(path);
+        }
+    }
 
-    if let (Some(env_name), Some(false)) = removed {
-        let mut refs = read_credentials_refs()?;
-        if refs.remove(serde_yaml::Value::String(env_name)).is_some() {
+    // 引用名不再被任何 provider 引用时清理凭据
+    if let Some(env_name) = removed_env_name {
+        let still_referenced = {
+            let providers = get_providers()?;
+            providers.values().any(|config| {
+                config.get("apiKeyEnv").and_then(|v| v.as_str()) == Some(env_name.as_str())
+            })
+        };
+        if !still_referenced {
+            let mut refs = read_credentials_refs()?;
+            refs.remove(serde_yaml::Value::String(env_name));
             write_credentials_refs_locked(&refs)?;
         }
     }
 
-    write_dsh_settings_locked(&settings)
+    Ok(DshWriteOutcome {
+        backup_path: backup_path.map(|p| p.display().to_string()),
+    })
 }
 
 // ============================================================================
-// Default Model (agent-default-model)
+// Default Model（agent-default-model 条目，写入所有已有 profile）
 // ============================================================================
 
-/// 读取 `agent-default-model` 分节；分节缺失或缺 provider/model 字段时
-/// 返回 None（不报错）。
+/// 读取当前默认模型（首个含该条目的 patch 源）
 pub fn get_default_model() -> Result<Option<DshDefaultModel>, AppError> {
-    let settings = read_dsh_settings()?;
-    let Some(section) = settings.get(DEFAULT_MODEL_KEY).and_then(|v| v.as_mapping()) else {
+    let Some(config) = read_entry_config_from_sources(DEFAULT_MODEL_ENTRY_ID)? else {
         return Ok(None);
     };
-    let provider = section.get("provider").and_then(|v| v.as_str());
-    let model = section.get("model").and_then(|v| v.as_str());
-    let (Some(provider), Some(model)) = (provider, model) else {
-        return Ok(None);
-    };
-    let reasoning_effort = section
+    let provider = config
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let model = config
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let reasoning_effort = config
         .get("reasoningEffort")
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    Ok(Some(DshDefaultModel {
-        provider: provider.to_string(),
-        model: model.to_string(),
-        reasoning_effort,
-    }))
+    match (provider, model) {
+        (Some(provider), Some(model)) => Ok(Some(DshDefaultModel {
+            provider,
+            model,
+            reasoning_effort,
+        })),
+        _ => Ok(None),
+    }
 }
 
-/// 切换当前供应商：改写 `agent-default-model` 分节。
-///
-/// 模型取该 provider 的 `models[0].id`（不向后扫描空 id，与 hermes 的
-/// apply_switch_defaults 一致）；provider 无 models 时跳过写入并
-/// log::warn（不报错）。分节里已有的 `reasoningEffort` 原样保留。
+/// 切换默认模型到指定 provider：所有已有 profile 的 `agent-default-model`
+/// 条目改写为 `{provider: <key>, model: <该 provider 首个模型 id>}`。
+/// 保留盘上已有的 `reasoningEffort`。provider 无 models 时跳过写入并告警。
 pub fn set_default_model(provider_key: &str) -> Result<DshWriteOutcome, AppError> {
     let _guard = dsh_write_lock().lock()?;
 
-    let mut settings = read_dsh_settings()?;
-
-    let first_model_id = settings
-        .get(LLM_PI_AI_KEY)
-        .and_then(|v| v.get("providers"))
-        .and_then(|v| v.get(provider_key))
-        .and_then(|v| v.get("models"))
-        .and_then(|v| v.as_sequence())
-        .and_then(|seq| seq.first())
+    // 取该 provider 的首个模型 id
+    let provider = get_provider(provider_key)?.ok_or_else(|| {
+        AppError::localized(
+            "dsh.default_model.provider_missing",
+            format!("dsh 供应商不存在: {provider_key}"),
+            format!("dsh provider does not exist: {provider_key}"),
+        )
+    })?;
+    let model = provider
+        .get("models")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
         .and_then(|m| m.get("id"))
-        .and_then(|id| id.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .and_then(|v| v.as_str())
         .map(str::to_string);
 
-    let Some(model_id) = first_model_id else {
+    let Some(model) = model else {
         log::warn!(
-            "dsh provider '{provider_key}' has no models; skipping agent-default-model update"
+            "dsh provider '{provider_key}' has no models; skipping agent-default-model write"
         );
         return Ok(DshWriteOutcome::default());
     };
 
-    let root = settings_root_mut(&mut settings)?;
-
-    // 保留分节里已有的 reasoningEffort（若存在）
-    let reasoning_effort = root
-        .get(DEFAULT_MODEL_KEY)
-        .and_then(|v| v.get("reasoningEffort"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-
-    let mut section = serde_yaml::Mapping::new();
-    section.insert(
-        serde_yaml::Value::String("provider".to_string()),
-        serde_yaml::Value::String(provider_key.to_string()),
-    );
-    section.insert(
-        serde_yaml::Value::String("model".to_string()),
-        serde_yaml::Value::String(model_id),
-    );
-    if let Some(effort) = reasoning_effort {
-        section.insert(
-            serde_yaml::Value::String("reasoningEffort".to_string()),
-            serde_yaml::Value::String(effort),
-        );
+    let mut backup_path = None;
+    for path in patch_write_targets() {
+        let provider_string = provider_key.to_string();
+        let model_string = model.clone();
+        update_config_entry_in_file(
+            &path,
+            DEFAULT_MODEL_ENTRY_ID,
+            DEFAULT_MODEL_PLUGIN,
+            move |config| {
+                // 保留盘上已有的 reasoningEffort
+                config.insert(
+                    serde_yaml::Value::String("provider".to_string()),
+                    serde_yaml::Value::String(provider_string),
+                );
+                config.insert(
+                    serde_yaml::Value::String("model".to_string()),
+                    serde_yaml::Value::String(model_string),
+                );
+                Ok(true)
+            },
+        )?;
+        if backup_path.is_none() {
+            backup_path = Some(path);
+        }
     }
 
-    root.insert(
-        serde_yaml::Value::String(DEFAULT_MODEL_KEY.to_string()),
-        serde_yaml::Value::Mapping(section),
-    );
-
-    write_dsh_settings_locked(&settings)
+    Ok(DshWriteOutcome {
+        backup_path: backup_path.map(|p| p.display().to_string()),
+    })
 }
 
 // ============================================================================
-// Common Config Snippets
-// ============================================================================
+// Common Config Snippet（通用配置片段）
 //
-// dsh 的通用配置片段是 YAML 文本，顶层 mapping 深合并进 settings.yaml。
-// `llm-pi-ai`（provider 管理）与 `agent-default-model`（默认模型切换）由
-// 本模块的专用函数维护，snippet 不允许触碰。
+// dsh 的通用配置片段是 YAML mapping 文本，语义为 **llm-pi-ai 条目的 config
+// 级共享默认值**（如 retryPolicy / timeoutMs / streamIdleTimeoutMs 等路由级
+// 字段）——patch 模型下任意 settings namespace 没有统一的插件名可解析，因此
+// 片段合并进所有已有 profile 的 `llm-pi-ai` 条目 config（`providers` 键由
+// 供应商管理逻辑独占，不参与合并/移除/判定）。
+// ============================================================================
 
-/// 受保护的顶层键：snippet 含这些键时忽略并告警
-const PROTECTED_TOP_LEVEL_KEYS: &[&str] = &[LLM_PI_AI_KEY, DEFAULT_MODEL_KEY];
+const PROTECTED_SNIPPET_KEYS: &[&str] = &["providers"];
 
-fn is_protected_top_level_key(key: &serde_yaml::Value) -> bool {
-    key.as_str()
-        .map(|s| PROTECTED_TOP_LEVEL_KEYS.contains(&s))
-        .unwrap_or(false)
-}
-
-/// 解析 snippet 为 YAML Mapping；空/纯注释 → 空 Mapping；
-/// 顶层非 Mapping 报 Config 错误。
+/// 解析通用配置片段（YAML 顶层必须是 mapping）
 pub(crate) fn parse_common_config_snippet(snippet: &str) -> Result<serde_yaml::Mapping, AppError> {
-    if snippet.trim().is_empty() {
+    let trimmed = snippet.trim();
+    if trimmed.is_empty() {
         return Ok(serde_yaml::Mapping::new());
     }
-    let value: serde_yaml::Value = serde_yaml::from_str(snippet)
-        .map_err(|e| AppError::Config(format!("Failed to parse dsh common config: {e}")))?;
+    let value: serde_yaml::Value = serde_yaml::from_str(trimmed).map_err(|e| {
+        AppError::localized(
+            "dsh_common_config_invalid",
+            format!("无效的 dsh 通用配置 YAML: {e}"),
+            format!("Invalid dsh common config YAML: {e}"),
+        )
+    })?;
     match value {
         serde_yaml::Value::Mapping(mapping) => Ok(mapping),
         serde_yaml::Value::Null => Ok(serde_yaml::Mapping::new()),
-        _ => Err(AppError::Config(
-            "dsh common config snippet must be a YAML mapping".to_string(),
+        _ => Err(AppError::localized(
+            "dsh_common_config_invalid",
+            "dsh 通用配置必须是 YAML mapping",
+            "dsh common config must be a YAML mapping",
         )),
     }
 }
 
-/// 深合并：两边都是 Mapping 时逐键递归，否则整体替换。
 fn deep_merge_yaml(target: &mut serde_yaml::Value, source: &serde_yaml::Value) {
-    if let (serde_yaml::Value::Mapping(target_map), serde_yaml::Value::Mapping(source_map)) =
-        (&mut *target, source)
-    {
-        for (key, value) in source_map {
-            match target_map.get_mut(key) {
+    if let (serde_yaml::Value::Mapping(t), serde_yaml::Value::Mapping(s)) = (&mut *target, source) {
+        for (key, value) in s {
+            match t.get_mut(key) {
                 Some(existing) => deep_merge_yaml(existing, value),
                 None => {
-                    target_map.insert(key.clone(), value.clone());
+                    t.insert(key.clone(), value.clone());
                 }
             }
         }
@@ -738,46 +937,41 @@ fn deep_merge_yaml(target: &mut serde_yaml::Value, source: &serde_yaml::Value) {
     }
 }
 
-/// 按 snippet 的键路径递归精确移除：仅当现有值与 snippet 值相等时才移除，
-/// 避免误删用户后改的内容；嵌套 Mapping 被掏空后连键一起移除。
-fn remove_matching_yaml(target: &mut serde_yaml::Value, source: &serde_yaml::Value) {
-    let (serde_yaml::Value::Mapping(target_map), serde_yaml::Value::Mapping(source_map)) =
-        (&mut *target, source)
-    else {
-        return;
-    };
-    for (key, source_value) in source_map {
-        let should_remove = match target_map.get_mut(key) {
-            Some(existing) if existing.is_mapping() && source_value.is_mapping() => {
-                remove_matching_yaml(existing, source_value);
-                existing.as_mapping().map(|m| m.is_empty()).unwrap_or(false)
-            }
-            Some(existing) => existing == source_value,
-            None => false,
-        };
-        if should_remove {
-            target_map.remove(key);
-        }
-    }
-}
-
-/// settings 是否已包含 snippet 的所有键值（递归；Mapping 只要求子集）
 fn yaml_contains(target: &serde_yaml::Value, source: &serde_yaml::Value) -> bool {
     match (target, source) {
-        (serde_yaml::Value::Mapping(target_map), serde_yaml::Value::Mapping(source_map)) => {
-            source_map.iter().all(|(key, value)| {
-                target_map
-                    .get(key)
-                    .map(|existing| yaml_contains(existing, value))
-                    .unwrap_or(false)
+        (serde_yaml::Value::Mapping(t), serde_yaml::Value::Mapping(s)) => {
+            s.iter().all(|(key, value)| {
+                t.get(key)
+                    .is_some_and(|target_value| yaml_contains(target_value, value))
             })
         }
-        (target, source) => target == source,
+        _ => target == source,
     }
 }
 
-/// 将通用配置片段（YAML mapping）逐顶层键深合并进 settings.yaml。
-/// 保护键 `llm-pi-ai` / `agent-default-model` 不合并（忽略并 log::warn）。
+fn remove_matching_yaml(target: &mut serde_yaml::Mapping, source: &serde_yaml::Mapping) {
+    for (key, value) in source {
+        let Some(existing) = target.get_mut(key) else {
+            continue;
+        };
+        match (existing, value) {
+            (serde_yaml::Value::Mapping(existing_map), serde_yaml::Value::Mapping(source_map)) => {
+                remove_matching_yaml(existing_map, source_map);
+                if existing_map.is_empty() {
+                    target.remove(key);
+                }
+            }
+            (existing, value) => {
+                if existing == value {
+                    target.remove(key);
+                }
+            }
+        }
+    }
+}
+
+/// 应用通用配置片段：深合并进所有已有 profile 的 `llm-pi-ai` 条目 config
+/// （`providers` 保护键跳过并告警）
 pub fn apply_dsh_common_config(snippet: &str) -> Result<(), AppError> {
     let snippet_map = parse_common_config_snippet(snippet)?;
     if snippet_map.is_empty() {
@@ -785,31 +979,31 @@ pub fn apply_dsh_common_config(snippet: &str) -> Result<(), AppError> {
     }
 
     let _guard = dsh_write_lock().lock()?;
-    let mut settings = read_dsh_settings()?;
-    let root = settings_root_mut(&mut settings)?;
-
-    for (key, value) in &snippet_map {
-        if is_protected_top_level_key(key) {
-            log::warn!(
-                "dsh common config: ignored protected top-level key '{}'",
-                key.as_str().unwrap_or("<non-string>")
-            );
-            continue;
-        }
-        match root.get_mut(key) {
-            Some(existing) => deep_merge_yaml(existing, value),
-            None => {
-                root.insert(key.clone(), value.clone());
+    for path in patch_write_targets() {
+        let snippet_map = snippet_map.clone();
+        update_config_entry_in_file(&path, LLM_PI_AI_ENTRY_ID, LLM_PI_AI_PLUGIN, move |config| {
+            for (key, value) in &snippet_map {
+                if key
+                    .as_str()
+                    .is_some_and(|k| PROTECTED_SNIPPET_KEYS.contains(&k))
+                {
+                    log::warn!("dsh 通用配置跳过保护键: providers");
+                    continue;
+                }
+                match config.get_mut(key) {
+                    Some(existing) => deep_merge_yaml(existing, value),
+                    None => {
+                        config.insert(key.clone(), value.clone());
+                    }
+                }
             }
-        }
+            Ok(true)
+        })?;
     }
-
-    write_dsh_settings_locked(&settings)?;
     Ok(())
 }
 
-/// 按 snippet 的键路径从 settings.yaml 精确移除（仅当现有值与 snippet
-/// 值相等时才移除，避免误删用户后改的内容）。保护键同样不触碰。
+/// 移除通用配置片段（值已被用户改走的键不动）
 pub fn remove_dsh_common_config(snippet: &str) -> Result<(), AppError> {
     let snippet_map = parse_common_config_snippet(snippet)?;
     if snippet_map.is_empty() {
@@ -817,160 +1011,203 @@ pub fn remove_dsh_common_config(snippet: &str) -> Result<(), AppError> {
     }
 
     let _guard = dsh_write_lock().lock()?;
-    let mut settings = read_dsh_settings()?;
-    let root = settings_root_mut(&mut settings)?;
-
-    for (key, value) in &snippet_map {
-        if is_protected_top_level_key(key) {
-            log::warn!(
-                "dsh common config: ignored protected top-level key '{}'",
-                key.as_str().unwrap_or("<non-string>")
-            );
-            continue;
-        }
-        let should_remove = match root.get_mut(key) {
-            Some(existing) if existing.is_mapping() && value.is_mapping() => {
-                remove_matching_yaml(existing, value);
-                existing.as_mapping().map(|m| m.is_empty()).unwrap_or(false)
+    for path in patch_write_targets() {
+        let snippet_map = snippet_map.clone();
+        update_config_entry_in_file(&path, LLM_PI_AI_ENTRY_ID, LLM_PI_AI_PLUGIN, move |config| {
+            let mut filtered = serde_yaml::Mapping::new();
+            for (key, value) in &snippet_map {
+                if key
+                    .as_str()
+                    .is_some_and(|k| PROTECTED_SNIPPET_KEYS.contains(&k))
+                {
+                    continue;
+                }
+                filtered.insert(key.clone(), value.clone());
             }
-            Some(existing) => existing == value,
-            None => false,
-        };
-        if should_remove {
-            root.remove(key);
-        }
+            remove_matching_yaml(config, &filtered);
+            Ok(true)
+        })?;
     }
-
-    write_dsh_settings_locked(&settings)?;
     Ok(())
 }
 
-/// settings.yaml 是否已包含 snippet 的所有键值（保护键不参与判定；
-/// snippet 解析失败时返回 false）
+/// 判断片段内容是否已包含在**所有**已有 profile 的 `llm-pi-ai` 条目 config 里
 pub fn dsh_common_config_applied(snippet: &str) -> bool {
     let Ok(snippet_map) = parse_common_config_snippet(snippet) else {
         return false;
     };
-    if snippet_map.is_empty() {
-        return true;
-    }
-    let Ok(settings) = read_dsh_settings() else {
-        return false;
-    };
-    let Some(root) = settings.as_mapping() else {
-        return false;
-    };
-    snippet_map
+    let filtered: Vec<(&serde_yaml::Value, &serde_yaml::Value)> = snippet_map
         .iter()
-        .filter(|(key, _)| !is_protected_top_level_key(key))
-        .all(|(key, value)| {
-            root.get(key)
-                .map(|existing| yaml_contains(existing, value))
-                .unwrap_or(false)
+        .filter(|(key, _)| {
+            key.as_str()
+                .is_some_and(|k| !PROTECTED_SNIPPET_KEYS.contains(&k))
         })
+        .collect();
+    if filtered.is_empty() {
+        return false;
+    }
+
+    let targets = patch_read_sources();
+    if targets.is_empty() {
+        return false;
+    }
+    targets.iter().all(|path| {
+        let Ok(Some(config)) = read_entry_config_from_sources_at(path, LLM_PI_AI_ENTRY_ID) else {
+            return false;
+        };
+        filtered.iter().all(|(key, value)| {
+            config
+                .get(key)
+                .is_some_and(|target| yaml_contains(target, value))
+        })
+    })
+}
+
+// ============================================================================
+// Live 读取投影（services/provider/live.rs 的 read_live_settings 用）
+// ============================================================================
+
+/// 把 dsh live 配置投影为 JSON（形态对齐旧 settings.yaml：`{"llm-pi-ai":
+/// {"providers": {...}, ...llm-pi-ai 其余 config 键}, "agent-default-model":
+/// {...}}`）。不存在任何 patch 源时报 `dsh.config.missing`。
+pub fn read_dsh_live_json() -> Result<serde_json::Value, AppError> {
+    if patch_read_sources().is_empty() {
+        return Err(AppError::localized(
+            "dsh.config.missing",
+            "dsh 配置文件不存在",
+            "dsh configuration file not found",
+        ));
+    }
+
+    let providers = get_providers()?;
+
+    // llm-pi-ai 条目的其余 config 键（首个含该条目的源）
+    let mut llm_extra = serde_json::Map::new();
+    if let Some(config) = read_entry_config_from_sources(LLM_PI_AI_ENTRY_ID)? {
+        for (key, value) in config {
+            if key.as_str() == Some("providers") {
+                continue;
+            }
+            if let (Some(key_str), Ok(json_val)) =
+                (key.as_str().map(str::to_string), yaml_to_json(&value))
+            {
+                llm_extra.insert(key_str, json_val);
+            }
+        }
+    }
+
+    let mut llm = llm_extra;
+    llm.insert(
+        "providers".to_string(),
+        serde_json::Value::Object(providers),
+    );
+
+    let mut root = serde_json::Map::new();
+    root.insert(
+        LLM_PI_AI_ENTRY_ID.to_string(),
+        serde_json::Value::Object(llm),
+    );
+
+    if let Some(default_model) = get_default_model()? {
+        let mut dm = serde_json::Map::new();
+        dm.insert(
+            "provider".to_string(),
+            serde_json::Value::String(default_model.provider),
+        );
+        dm.insert(
+            "model".to_string(),
+            serde_json::Value::String(default_model.model),
+        );
+        if let Some(effort) = default_model.reasoning_effort {
+            dm.insert(
+                "reasoningEffort".to_string(),
+                serde_json::Value::String(effort),
+            );
+        }
+        root.insert(
+            DEFAULT_MODEL_ENTRY_ID.to_string(),
+            serde_json::Value::Object(dm),
+        );
+    }
+
+    Ok(serde_json::Value::Object(root))
 }
 
 // ============================================================================
 // Validation
 // ============================================================================
 
-/// dsh `llm-pi-ai` 允许的线协议（provider.ts 的 PROTOCOLS 表）
 const ALLOWED_APIS: &[&str] = &[
     "openai-completions",
     "openai-responses",
     "anthropic-messages",
 ];
 
-/// 校验 dsh 供应商配置（对齐 dsh 对 catalog 未知自定义路由的硬性要求）：
-/// `api`（若存在）必须在三枚举内；`baseURL` 必须是非空字符串；
-/// `models` 必须是非空数组且元素有非空 `id`。
+/// 校验扁平 settings_config：api 三枚举、baseURL 非空、models 非空且元素有 id
 pub fn validate_dsh_provider_config(config: &serde_json::Value) -> Result<(), AppError> {
     let obj = config.as_object().ok_or_else(|| {
         AppError::localized(
-            "provider.dsh.configNotObject",
-            "dsh 供应商配置必须是 JSON 对象",
-            "dsh provider config must be a JSON object.",
+            "provider.dsh.settings.not_object",
+            "dsh 配置必须是 JSON 对象",
+            "dsh configuration must be a JSON object",
         )
     })?;
 
-    if let Some(api) = obj.get("api") {
-        let valid = api
-            .as_str()
-            .map(|s| ALLOWED_APIS.contains(&s))
-            .unwrap_or(false);
-        if !valid {
+    if let Some(api) = obj.get("api").and_then(|v| v.as_str()) {
+        if !ALLOWED_APIS.contains(&api) {
             return Err(AppError::localized(
-                "provider.dsh.invalidApi",
-                format!("api 必须是以下之一: {}", ALLOWED_APIS.join(", ")),
-                format!("api must be one of: {}.", ALLOWED_APIS.join(", ")),
+                "provider.dsh.api.invalid",
+                format!(
+                    "dsh 供应商 api '{api}' 非法；允许值: {}",
+                    ALLOWED_APIS.join(", ")
+                ),
+                format!(
+                    "Invalid dsh provider api '{api}'; allowed: {}",
+                    ALLOWED_APIS.join(", ")
+                ),
             ));
         }
     }
 
-    let base_url_ok = obj
+    let base_url = obj
         .get("baseURL")
         .and_then(|v| v.as_str())
         .map(str::trim)
-        .map(|s| !s.is_empty())
-        .unwrap_or(false);
-    if !base_url_ok {
+        .unwrap_or("");
+    if base_url.is_empty() {
         return Err(AppError::localized(
-            "provider.dsh.baseUrlRequired",
-            "baseURL 不能为空",
-            "baseURL is required.",
+            "provider.dsh.base_url.missing",
+            "dsh 供应商缺少 baseURL",
+            "dsh provider is missing `baseURL`",
         ));
     }
 
-    match obj.get("models") {
-        Some(serde_json::Value::Array(models)) if !models.is_empty() => {
-            for (index, model) in models.iter().enumerate() {
-                let id_ok = model
+    match obj.get("models").and_then(|v| v.as_array()) {
+        Some(models) if !models.is_empty() => {
+            for model in models {
+                let valid = model
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .map(|s| !s.is_empty())
-                    .unwrap_or(false);
-                if !id_ok {
+                    .is_some_and(|id| !id.trim().is_empty());
+                if !valid {
                     return Err(AppError::localized(
-                        "provider.dsh.modelIdRequired",
-                        format!("models[{index}] 缺少非空 id"),
-                        format!("models[{index}] must have a non-empty id."),
+                        "provider.dsh.models.missing_id",
+                        "dsh 供应商 models 里的每个模型都必须有 id",
+                        "Every model in dsh provider `models` must have an `id`",
                     ));
                 }
             }
         }
         _ => {
             return Err(AppError::localized(
-                "provider.dsh.modelsRequired",
-                "models 必须是非空数组",
-                "models must be a non-empty array.",
+                "provider.dsh.models.empty",
+                "dsh 供应商必须至少声明一个模型（models）",
+                "dsh provider must declare at least one model (`models`)",
             ));
         }
     }
 
     Ok(())
-}
-
-// ============================================================================
-// YAML ↔ JSON Conversion Helpers
-// ============================================================================
-
-/// Convert a `serde_yaml::Value` to a `serde_json::Value`.
-pub(crate) fn yaml_to_json(yaml: &serde_yaml::Value) -> Result<serde_json::Value, AppError> {
-    // Serialize YAML value to string, then parse as JSON value.
-    // This handles all type mappings correctly.
-    let yaml_str = serde_yaml::to_string(yaml)
-        .map_err(|e| AppError::Config(format!("Failed to serialize YAML value: {e}")))?;
-    serde_yaml::from_str::<serde_json::Value>(&yaml_str)
-        .map_err(|e| AppError::Config(format!("Failed to convert YAML to JSON: {e}")))
-}
-
-/// Convert a `serde_json::Value` to a `serde_yaml::Value`.
-pub(crate) fn json_to_yaml(json: &serde_json::Value) -> Result<serde_yaml::Value, AppError> {
-    let json_str = serde_json::to_string(json)
-        .map_err(|e| AppError::Config(format!("Failed to serialize JSON value: {e}")))?;
-    serde_yaml::from_str(&json_str)
-        .map_err(|e| AppError::Config(format!("Failed to convert JSON to YAML: {e}")))
 }
 
 // ============================================================================
@@ -980,6 +1217,7 @@ pub(crate) fn json_to_yaml(json: &serde_json::Value) -> Result<serde_yaml::Value
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use serial_test::serial;
     use std::sync::{Mutex, OnceLock};
 
@@ -990,12 +1228,8 @@ mod tests {
             .unwrap_or_else(|err| err.into_inner())
     }
 
-    /// Run a test with an isolated temp home directory.
-    ///
-    /// Saves and restores `CC_SWITCH_TEST_HOME` to avoid interfering with
-    /// parallel tests in other modules, and neutralizes `DSH_HOME` so an
-    /// ambient value (e.g. from a real dsh install) can't make tests escape
-    /// the temp home.
+    /// 隔离临时 HOME：保存/恢复 CC_SWITCH_TEST_HOME，并中和 DSH_HOME
+    /// （防止真实 dsh 安装把测试带出临时目录）。
     fn with_test_home<T>(test_fn: impl FnOnce() -> T) -> T {
         let _guard = test_guard();
         let tmp = tempfile::tempdir().unwrap();
@@ -1015,623 +1249,279 @@ mod tests {
         result
     }
 
-    /// Seed a settings.yaml with the given raw content.
-    fn seed_settings(raw: &str) {
-        let path = get_dsh_settings_path();
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, raw).unwrap();
+    /// 建立 profiles/web 与 profiles/desktop 两个 profile 目录
+    fn seed_profiles() -> (PathBuf, PathBuf) {
+        let base = get_dsh_dir().join("profiles");
+        let web = base.join("web").join("cordis.patch.yml");
+        let desktop = base.join("desktop").join("cordis.patch.yml");
+        fs::create_dir_all(web.parent().unwrap()).unwrap();
+        fs::create_dir_all(desktop.parent().unwrap()).unwrap();
+        (web, desktop)
     }
 
-    // ---- generate_api_key_env_name ----
-
-    #[test]
-    fn api_key_env_name_from_plain_key() {
-        assert_eq!(
-            generate_api_key_env_name("deepseek"),
-            "DSH_DEEPSEEK_API_KEY"
-        );
+    fn sample_config() -> serde_json::Value {
+        json!({
+            "api": "openai-completions",
+            "baseURL": "https://api.example.com/v1",
+            "apiKey": "sk-test",
+            "models": [{ "id": "demo-model", "name": "Demo Model" }],
+            "compat": { "supportsDeveloperRole": false }
+        })
     }
 
     #[test]
-    fn api_key_env_name_folds_hyphens() {
+    #[serial]
+    fn provider_roundtrip_writes_all_profiles_and_splits_credentials() {
+        with_test_home(|| {
+            let (web, desktop) = seed_profiles();
+
+            set_provider("demo", sample_config()).expect("set_provider");
+
+            for path in [&web, &desktop] {
+                let raw = fs::read_to_string(path).unwrap();
+                assert!(raw.contains("id: llm-pi-ai"), "llm-pi-ai entry: {raw}");
+                assert!(raw.contains("demo:"), "provider key: {raw}");
+                assert!(raw.contains("apiKeyEnv: DSH_DEMO_API_KEY"), "{raw}");
+                assert!(!raw.contains("sk-test"), "密钥不得写入 patch 文件");
+            }
+
+            // 凭据拆分到了 .credentials.yaml
+            let creds = fs::read_to_string(get_dsh_credentials_path()).unwrap();
+            assert!(creds.contains("version: 1"));
+            assert!(creds.contains("DSH_DEMO_API_KEY: sk-test"));
+
+            // 读回物化
+            let providers = get_providers().unwrap();
+            let demo = providers.get("demo").expect("demo provider");
+            assert_eq!(demo.get("apiKey").and_then(|v| v.as_str()), Some("sk-test"));
+            assert_eq!(
+                demo.get("apiKeyEnv").and_then(|v| v.as_str()),
+                Some("DSH_DEMO_API_KEY")
+            );
+            assert_eq!(
+                demo.get("baseURL").and_then(|v| v.as_str()),
+                Some("https://api.example.com/v1")
+            );
+
+            // 删除后 provider 与独占凭据引用都清除
+            remove_provider("demo").unwrap();
+            assert!(get_providers().unwrap().get("demo").is_none());
+            let creds = fs::read_to_string(get_dsh_credentials_path()).unwrap();
+            assert!(!creds.contains("DSH_DEMO_API_KEY"));
+            // llm-pi-ai 条目已整体移除（providers 掏空）
+            let raw = fs::read_to_string(&web).unwrap();
+            assert!(!raw.contains("id: llm-pi-ai"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn provider_write_preserves_other_blocks_and_credentials_sections() {
+        with_test_home(|| {
+            let (web, _desktop) = seed_profiles();
+            fs::write(
+                &web,
+                "# 用户头部注释\n- insert:\n    - id: user-plugin\n      config:\n        token: !!js process.env.MY_TOKEN\n",
+            )
+            .unwrap();
+            fs::write(
+                get_dsh_credentials_path(),
+                "version: 1\nrefs:\n  OTHER_KEY: keep-me\nrecords:\n  some/thing:\n    kind: grant\n",
+            )
+            .unwrap();
+
+            set_provider("demo", sample_config()).unwrap();
+
+            let raw = fs::read_to_string(&web).unwrap();
+            assert!(raw.contains("# 用户头部注释"));
+            assert!(
+                raw.contains("!!js process.env.MY_TOKEN"),
+                "用户条目逐字保留"
+            );
+            let creds = fs::read_to_string(get_dsh_credentials_path()).unwrap();
+            assert!(creds.contains("OTHER_KEY: keep-me"));
+            assert!(creds.contains("records:"));
+            assert!(creds.contains("some/thing:"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn default_model_set_get_and_preserve_reasoning_effort() {
+        with_test_home(|| {
+            let (web, _desktop) = seed_profiles();
+            set_provider("demo", sample_config()).unwrap();
+            // 预置 reasoningEffort
+            fs::write(
+                &web,
+                "- id: agent-default-model\n  config:\n    provider: old\n    model: old-model\n    reasoningEffort: high\n",
+            )
+            .unwrap();
+
+            set_default_model("demo").unwrap();
+
+            let dm = get_default_model().unwrap().expect("default model");
+            assert_eq!(dm.provider, "demo");
+            assert_eq!(dm.model, "demo-model");
+
+            let raw = fs::read_to_string(&web).unwrap();
+            assert!(raw.contains("reasoningEffort: high"), "保留既有档位: {raw}");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn default_model_skips_provider_without_models() {
+        with_test_home(|| {
+            seed_profiles();
+            let mut config = sample_config();
+            config.as_object_mut().unwrap().remove("models");
+            set_provider("bare", config).unwrap();
+            // 无 models：跳过写入，不报错
+            set_default_model("bare").unwrap();
+            assert!(get_default_model().unwrap().is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn common_config_apply_applied_remove_roundtrip() {
+        with_test_home(|| {
+            let (web, _desktop) = seed_profiles();
+            let snippet =
+                "retryPolicy:\n  mode: normal\n  maxRetries: 3\nstreamIdleTimeoutMs: 60000\n";
+
+            assert!(!dsh_common_config_applied(snippet));
+            apply_dsh_common_config(snippet).unwrap();
+            assert!(dsh_common_config_applied(snippet));
+
+            let raw = fs::read_to_string(&web).unwrap();
+            assert!(raw.contains("retryPolicy"), "{raw}");
+            assert!(raw.contains("streamIdleTimeoutMs: 60000"), "{raw}");
+
+            remove_dsh_common_config(snippet).unwrap();
+            assert!(!dsh_common_config_applied(snippet));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn common_config_skips_protected_providers_key() {
+        with_test_home(|| {
+            seed_profiles();
+            let snippet = "providers:\n  evil: {}\nstreamIdleTimeoutMs: 5000\n";
+            apply_dsh_common_config(snippet).unwrap();
+            let providers = get_providers().unwrap();
+            assert!(providers.get("evil").is_none(), "providers 保护键不合并");
+            let Some(config) = read_entry_config_from_sources(LLM_PI_AI_ENTRY_ID).unwrap() else {
+                panic!("llm-pi-ai entry should exist");
+            };
+            assert!(config.get("streamIdleTimeoutMs").is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn write_without_profiles_falls_back_to_home_patch() {
+        with_test_home(|| {
+            // 无 profiles 目录 → 写 home 级 ~/.dsh/cordis.patch.yml
+            set_provider("demo", sample_config()).unwrap();
+            let home = get_dsh_home_patch_path();
+            let raw = fs::read_to_string(&home).unwrap();
+            assert!(raw.contains("id: llm-pi-ai"));
+            assert!(raw.contains("demo:"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn write_creates_patch_backup_on_overwrite() {
+        with_test_home(|| {
+            let (web, _) = seed_profiles();
+            set_provider("demo", sample_config()).unwrap();
+            let mut changed = sample_config();
+            changed["baseURL"] = json!("https://changed.example.com/v1");
+            set_provider("demo", changed).unwrap();
+            let backups = get_app_config_dir().join("backups").join("dsh");
+            let count = fs::read_dir(&backups)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().starts_with("dsh_patch_"))
+                .count();
+            assert!(count >= 1, "patch 备份应存在");
+            let _ = web;
+        });
+    }
+
+    #[test]
+    fn validate_accepts_valid_config() {
+        validate_dsh_provider_config(&json!({
+            "api": "openai-completions",
+            "baseURL": "https://x",
+            "models": [{ "id": "m" }]
+        }))
+        .unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_bad_api_blank_base_url_empty_models() {
+        assert!(validate_dsh_provider_config(&json!({
+            "api": "grpc",
+            "baseURL": "https://x",
+            "models": [{ "id": "m" }]
+        }))
+        .unwrap_err()
+        .to_string()
+        .contains("api"));
+        assert!(validate_dsh_provider_config(&json!({
+            "api": "openai-completions",
+            "models": [{ "id": "m" }]
+        }))
+        .unwrap_err()
+        .to_string()
+        .contains("baseURL"));
+        assert!(validate_dsh_provider_config(&json!({
+            "api": "openai-completions",
+            "baseURL": "https://x",
+            "models": []
+        }))
+        .unwrap_err()
+        .to_string()
+        .contains("models"));
+        assert!(validate_dsh_provider_config(&json!({
+            "api": "openai-completions",
+            "baseURL": "https://x",
+            "models": [{ "name": "no-id" }]
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn api_key_env_name_generation() {
+        assert_eq!(generate_api_key_env_name("demo"), "DSH_DEMO_API_KEY");
         assert_eq!(
             generate_api_key_env_name("my-gateway"),
             "DSH_MY_GATEWAY_API_KEY"
         );
-    }
-
-    #[test]
-    fn api_key_env_name_folds_spaces_and_symbols() {
+        assert_eq!(generate_api_key_env_name("a b.c"), "DSH_A_B_C_API_KEY");
         assert_eq!(
-            generate_api_key_env_name("my gateway.v2"),
-            "DSH_MY_GATEWAY_V2_API_KEY"
+            generate_api_key_env_name("ALREADY1"),
+            "DSH_ALREADY1_API_KEY"
         );
     }
 
     #[test]
-    fn api_key_env_name_keeps_uppercase_and_digits() {
-        assert_eq!(
-            generate_api_key_env_name("ALREADY2"),
-            "DSH_ALREADY2_API_KEY"
-        );
-    }
-
-    // ---- provider CRUD + credentials split ----
-
-    #[test]
-    #[serial]
-    fn read_settings_returns_empty_mapping_when_missing() {
+    fn read_live_json_shape() {
         with_test_home(|| {
-            let value = read_dsh_settings().unwrap();
-            assert!(value.as_mapping().unwrap().is_empty());
-            assert!(get_providers().unwrap().is_empty());
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn provider_roundtrip_splits_api_key_into_credentials() {
-        with_test_home(|| {
-            let config = serde_json::json!({
-                "api": "openai-completions",
-                "baseURL": "https://api.example.com/v1",
-                "apiKey": "sk-test-123",
-                "displayName": "Demo",
-                "timeoutMs": 60000,
-                "compat": { "supportsDeveloperRole": false },
-                "models": [{ "id": "model-a", "name": "Model A" }],
-            });
-            set_provider("demo", config).unwrap();
-
-            // settings.yaml: apiKeyEnv 落盘，密钥绝不出现
-            let raw = fs::read_to_string(get_dsh_settings_path()).unwrap();
-            assert!(!raw.contains("sk-test-123"));
-            let yaml: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
-            let entry = yaml
-                .get("llm-pi-ai")
-                .and_then(|v| v.get("providers"))
-                .and_then(|v| v.get("demo"))
-                .unwrap();
-            assert_eq!(
-                entry.get("apiKeyEnv").and_then(|v| v.as_str()),
-                Some("DSH_DEMO_API_KEY")
-            );
-            assert!(entry.get("apiKey").is_none());
-            assert_eq!(
-                entry.get("baseURL").and_then(|v| v.as_str()),
-                Some("https://api.example.com/v1")
-            );
-            // 可选 passthrough 字段原样透传
-            assert_eq!(entry.get("timeoutMs").and_then(|v| v.as_u64()), Some(60000));
-            assert_eq!(
-                entry
-                    .get("compat")
-                    .and_then(|v| v.get("supportsDeveloperRole"))
-                    .and_then(|v| v.as_bool()),
-                Some(false)
-            );
-
-            // credentials: version + refs
-            let cred_raw = fs::read_to_string(get_dsh_credentials_path()).unwrap();
-            let cred: serde_yaml::Value = serde_yaml::from_str(&cred_raw).unwrap();
-            assert_eq!(cred.get("version").and_then(|v| v.as_u64()), Some(1));
-            assert_eq!(
-                cred.get("refs")
-                    .and_then(|v| v.get("DSH_DEMO_API_KEY"))
-                    .and_then(|v| v.as_str()),
-                Some("sk-test-123")
-            );
-
-            // get_providers 反向物化 apiKey，保留 apiKeyEnv
-            let providers = get_providers().unwrap();
-            let demo = providers.get("demo").unwrap();
-            assert_eq!(demo["apiKey"], "sk-test-123");
-            assert_eq!(demo["apiKeyEnv"], "DSH_DEMO_API_KEY");
-            assert_eq!(demo["baseURL"], "https://api.example.com/v1");
-            assert_eq!(demo["models"][0]["id"], "model-a");
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn set_provider_respects_existing_api_key_env() {
-        with_test_home(|| {
-            let config = serde_json::json!({
-                "baseURL": "https://api.example.com/v1",
-                "apiKey": "sk-custom",
-                "apiKeyEnv": "MY_CUSTOM_KEY",
-                "models": [{ "id": "m" }],
-            });
-            set_provider("custom", config).unwrap();
-
-            let settings = read_dsh_settings().unwrap();
-            let entry = settings
-                .get("llm-pi-ai")
-                .and_then(|v| v.get("providers"))
-                .and_then(|v| v.get("custom"))
-                .unwrap();
-            assert_eq!(
-                entry.get("apiKeyEnv").and_then(|v| v.as_str()),
-                Some("MY_CUSTOM_KEY")
-            );
-
-            let refs = read_credentials_refs().unwrap();
-            assert_eq!(
-                refs.get("MY_CUSTOM_KEY").and_then(|v| v.as_str()),
-                Some("sk-custom")
-            );
-            assert!(refs.get("DSH_CUSTOM_API_KEY").is_none());
-
-            let provider = get_provider("custom").unwrap().unwrap();
-            assert_eq!(provider["apiKey"], "sk-custom");
-            assert_eq!(provider["apiKeyEnv"], "MY_CUSTOM_KEY");
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn set_provider_without_api_key_writes_no_credentials() {
-        with_test_home(|| {
-            let config = serde_json::json!({
-                "baseURL": "https://api.example.com/v1",
-                "models": [{ "id": "m" }],
-            });
-            set_provider("plain", config).unwrap();
-            // 无 apiKey：不生成 apiKeyEnv，也不创建 .credentials.yaml
-            let settings = read_dsh_settings().unwrap();
-            let entry = settings
-                .get("llm-pi-ai")
-                .and_then(|v| v.get("providers"))
-                .and_then(|v| v.get("plain"))
-                .unwrap();
-            assert!(entry.get("apiKeyEnv").is_none());
-            assert!(!get_dsh_credentials_path().exists());
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn set_provider_preserves_unknown_fields_on_update() {
-        // dsh 的可选字段很多（retryPolicy / timeoutMs / ...），用户可能经 dsh
-        // 自己的 UI 设置过；CC Switch 编辑其他字段时不得把它们抹掉。
-        with_test_home(|| {
-            seed_settings(
-                "\
-llm-pi-ai:
-  providers:
-    acme:
-      apiKeyEnv: ACME_KEY
-      baseURL: https://old.example.com
-      retryPolicy:
-        mode: normal
-        maxRetries: 3
-",
-            );
-
-            let update = serde_json::json!({ "baseURL": "https://new.example.com" });
-            set_provider("acme", update).unwrap();
-
-            let provider = get_provider("acme").unwrap().unwrap();
-            assert_eq!(provider["baseURL"], "https://new.example.com");
-            assert_eq!(provider["apiKeyEnv"], "ACME_KEY");
-            assert_eq!(provider["retryPolicy"]["maxRetries"], 3);
-        });
-    }
-
-    // ---- remove_provider refs cleanup ----
-
-    #[test]
-    #[serial]
-    fn remove_provider_deletes_unreferenced_credential() {
-        with_test_home(|| {
-            set_provider(
-                "solo",
-                serde_json::json!({
-                    "baseURL": "https://a.example.com",
-                    "apiKey": "sk-solo",
-                    "models": [{ "id": "m" }],
-                }),
-            )
-            .unwrap();
-            assert!(get_dsh_credentials_path().exists());
-
-            remove_provider("solo").unwrap();
-
-            assert!(get_providers().unwrap().is_empty());
-            let refs = read_credentials_refs().unwrap();
-            assert!(refs.get("DSH_SOLO_API_KEY").is_none());
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn remove_provider_keeps_shared_credential_until_last_reference() {
-        with_test_home(|| {
-            let mk = |base: &str, key: &str| {
-                serde_json::json!({
-                    "baseURL": base,
-                    "apiKey": key,
-                    "apiKeyEnv": "SHARED_KEY",
-                    "models": [{ "id": "m" }],
-                })
-            };
-            set_provider("one", mk("https://one.example.com", "sk-one")).unwrap();
-            set_provider("two", mk("https://two.example.com", "sk-two")).unwrap();
-
-            // 删除 one：SHARED_KEY 仍被 two 引用，refs 保留
-            remove_provider("one").unwrap();
-            let refs = read_credentials_refs().unwrap();
-            assert_eq!(
-                refs.get("SHARED_KEY").and_then(|v| v.as_str()),
-                Some("sk-two")
-            );
-            assert!(get_provider("one").unwrap().is_none());
-            assert!(get_provider("two").unwrap().is_some());
-
-            // 删除 two：引用清零，refs 条目一并删除
-            remove_provider("two").unwrap();
-            let refs = read_credentials_refs().unwrap();
-            assert!(refs.get("SHARED_KEY").is_none());
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn remove_provider_missing_is_noop() {
-        with_test_home(|| {
-            let outcome = remove_provider("ghost").unwrap();
-            assert!(outcome.backup_path.is_none());
-            assert!(!get_dsh_settings_path().exists());
-        });
-    }
-
-    // ---- agent-default-model ----
-
-    #[test]
-    #[serial]
-    fn default_model_roundtrip_with_models() {
-        with_test_home(|| {
-            assert!(get_default_model().unwrap().is_none());
-
-            set_provider(
-                "demo",
-                serde_json::json!({
-                    "baseURL": "https://a.example.com",
-                    "models": [{ "id": "m1" }, { "id": "m2" }],
-                }),
-            )
-            .unwrap();
+            seed_profiles();
+            set_provider("demo", sample_config()).unwrap();
             set_default_model("demo").unwrap();
 
-            let dm = get_default_model().unwrap().unwrap();
-            assert_eq!(dm.provider, "demo");
-            assert_eq!(dm.model, "m1");
-            assert!(dm.reasoning_effort.is_none());
-
-            // 分节确实落盘
-            let raw = fs::read_to_string(get_dsh_settings_path()).unwrap();
-            assert!(raw.contains("agent-default-model"));
+            let live = read_dsh_live_json().unwrap();
+            let providers = live["llm-pi-ai"]["providers"].as_object().unwrap();
+            assert!(providers.contains_key("demo"));
+            assert_eq!(live["agent-default-model"]["provider"], "demo");
+            assert_eq!(live["agent-default-model"]["model"], "demo-model");
         });
-    }
-
-    #[test]
-    #[serial]
-    fn set_default_model_skips_provider_without_models() {
-        with_test_home(|| {
-            set_provider(
-                "bare",
-                serde_json::json!({ "baseURL": "https://a.example.com" }),
-            )
-            .unwrap();
-
-            // 无 models：跳过写入，不报错
-            set_default_model("bare").unwrap();
-            assert!(get_default_model().unwrap().is_none());
-
-            let raw = fs::read_to_string(get_dsh_settings_path()).unwrap();
-            assert!(!raw.contains("agent-default-model"));
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn set_default_model_preserves_reasoning_effort() {
-        with_test_home(|| {
-            seed_settings(
-                "\
-llm-pi-ai:
-  providers:
-    old:
-      baseURL: https://old.example.com
-      models:
-        - id: old-model
-agent-default-model:
-  provider: old
-  model: old-model
-  reasoningEffort: high
-",
-            );
-
-            set_provider(
-                "new",
-                serde_json::json!({
-                    "baseURL": "https://new.example.com",
-                    "models": [{ "id": "new-model" }],
-                }),
-            )
-            .unwrap();
-            set_default_model("new").unwrap();
-
-            let dm = get_default_model().unwrap().unwrap();
-            assert_eq!(dm.provider, "new");
-            assert_eq!(dm.model, "new-model");
-            assert_eq!(dm.reasoning_effort.as_deref(), Some("high"));
-        });
-    }
-
-    // ---- common config snippets ----
-
-    #[test]
-    #[serial]
-    fn common_config_apply_contain_remove_roundtrip() {
-        with_test_home(|| {
-            let snippet = "\
-agent:
-  max_turns: 10
-  temperature: 0.5
-ui:
-  theme: dark
-";
-            assert!(!dsh_common_config_applied(snippet));
-
-            apply_dsh_common_config(snippet).unwrap();
-            assert!(dsh_common_config_applied(snippet));
-
-            let settings = read_dsh_settings().unwrap();
-            let agent = settings.get("agent").unwrap();
-            assert_eq!(agent.get("max_turns").and_then(|v| v.as_u64()), Some(10));
-            assert_eq!(
-                settings
-                    .get("ui")
-                    .and_then(|v| v.get("theme"))
-                    .and_then(|v| v.as_str()),
-                Some("dark")
-            );
-
-            remove_dsh_common_config(snippet).unwrap();
-            assert!(!dsh_common_config_applied(snippet));
-            let settings = read_dsh_settings().unwrap();
-            assert!(settings.get("agent").is_none());
-            assert!(settings.get("ui").is_none());
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn common_config_apply_deep_merges_with_existing() {
-        with_test_home(|| {
-            seed_settings("agent:\n  max_turns: 5\n");
-            apply_dsh_common_config("agent:\n  temperature: 0.5\n").unwrap();
-
-            let settings = read_dsh_settings().unwrap();
-            let agent = settings.get("agent").unwrap();
-            assert_eq!(agent.get("max_turns").and_then(|v| v.as_u64()), Some(5));
-            assert_eq!(agent.get("temperature").and_then(|v| v.as_f64()), Some(0.5));
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn common_config_ignores_protected_keys() {
-        with_test_home(|| {
-            set_provider(
-                "demo",
-                serde_json::json!({
-                    "baseURL": "https://a.example.com",
-                    "models": [{ "id": "m" }],
-                }),
-            )
-            .unwrap();
-
-            let snippet = "\
-llm-pi-ai:
-  providers:
-    evil:
-      baseURL: https://evil.example.com
-agent-default-model:
-  provider: evil
-  model: x
-telemetry:
-  enabled: false
-";
-            apply_dsh_common_config(snippet).unwrap();
-
-            // 保护键未被合并
-            assert!(get_provider("evil").unwrap().is_none());
-            assert!(get_provider("demo").unwrap().is_some());
-            assert!(get_default_model().unwrap().is_none());
-            // 非保护键正常合并
-            let settings = read_dsh_settings().unwrap();
-            assert_eq!(
-                settings
-                    .get("telemetry")
-                    .and_then(|v| v.get("enabled"))
-                    .and_then(|v| v.as_bool()),
-                Some(false)
-            );
-            // 保护键不参与 applied 判定
-            assert!(dsh_common_config_applied(snippet));
-
-            // remove 同样不触碰保护键
-            remove_dsh_common_config(snippet).unwrap();
-            assert!(get_provider("demo").unwrap().is_some());
-            let settings = read_dsh_settings().unwrap();
-            assert!(settings.get("telemetry").is_none());
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn common_config_remove_skips_user_modified_values() {
-        with_test_home(|| {
-            apply_dsh_common_config("ui:\n  theme: dark\n  font: mono\n").unwrap();
-
-            // 用户随后改了 theme
-            let mut settings = read_dsh_settings().unwrap();
-            {
-                let root = settings_root_mut(&mut settings).unwrap();
-                let ui = ensure_child_mapping(root, "ui");
-                ui.insert(
-                    serde_yaml::Value::String("theme".to_string()),
-                    serde_yaml::Value::String("light".to_string()),
-                );
-            }
-            write_dsh_settings(&settings).unwrap();
-
-            remove_dsh_common_config("ui:\n  theme: dark\n  font: mono\n").unwrap();
-
-            let settings = read_dsh_settings().unwrap();
-            let ui = settings.get("ui").unwrap();
-            // theme 已被用户改走 → 不误删；font 值未变 → 移除
-            assert_eq!(ui.get("theme").and_then(|v| v.as_str()), Some("light"));
-            assert!(ui.get("font").is_none());
-        });
-    }
-
-    #[test]
-    fn common_config_snippet_must_be_mapping() {
-        assert!(parse_common_config_snippet("- a\n- b\n").is_err());
-        assert!(parse_common_config_snippet("").unwrap().is_empty());
-        assert!(parse_common_config_snippet("# comment\n")
-            .unwrap()
-            .is_empty());
-    }
-
-    // ---- credentials file ----
-
-    #[test]
-    #[serial]
-    fn credentials_preserve_records_and_permissions() {
-        with_test_home(|| {
-            let cred_path = get_dsh_credentials_path();
-            fs::create_dir_all(cred_path.parent().unwrap()).unwrap();
-            fs::write(
-                &cred_path,
-                "\
-version: 1
-refs:
-  EXISTING_KEY: sk-old
-records:
-  llm-pi-ai/openai-codex:
-    kind: grant
-    payload:
-      token: abc
-",
-            )
-            .unwrap();
-
-            set_provider(
-                "demo",
-                serde_json::json!({
-                    "baseURL": "https://a.example.com",
-                    "apiKey": "sk-new",
-                    "models": [{ "id": "m" }],
-                }),
-            )
-            .unwrap();
-
-            let raw = fs::read_to_string(&cred_path).unwrap();
-            let doc: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
-            assert_eq!(doc.get("version").and_then(|v| v.as_u64()), Some(1));
-            let refs = doc.get("refs").unwrap();
-            assert_eq!(
-                refs.get("EXISTING_KEY").and_then(|v| v.as_str()),
-                Some("sk-old")
-            );
-            assert_eq!(
-                refs.get("DSH_DEMO_API_KEY").and_then(|v| v.as_str()),
-                Some("sk-new")
-            );
-            // records 原样保留
-            assert_eq!(
-                doc.get("records")
-                    .and_then(|v| v.get("llm-pi-ai/openai-codex"))
-                    .and_then(|v| v.get("kind"))
-                    .and_then(|v| v.as_str()),
-                Some("grant")
-            );
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = fs::metadata(&cred_path).unwrap().permissions().mode() & 0o777;
-                assert_eq!(mode, 0o600, "credentials file must be 0600");
-            }
-        });
-    }
-
-    // ---- validate_dsh_provider_config ----
-
-    #[test]
-    fn validate_accepts_valid_config() {
-        let config = serde_json::json!({
-            "api": "openai-completions",
-            "baseURL": "https://a.example.com",
-            "models": [{ "id": "m" }],
-        });
-        assert!(validate_dsh_provider_config(&config).is_ok());
-        // api 可省略（dsh 侧有 catalog 默认）
-        let config = serde_json::json!({
-            "baseURL": "https://a.example.com",
-            "models": [{ "id": "m" }],
-        });
-        assert!(validate_dsh_provider_config(&config).is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_unknown_api() {
-        let config = serde_json::json!({
-            "api": "bedrock",
-            "baseURL": "https://a.example.com",
-            "models": [{ "id": "m" }],
-        });
-        assert!(validate_dsh_provider_config(&config).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_missing_or_blank_base_url() {
-        let config = serde_json::json!({ "models": [{ "id": "m" }] });
-        assert!(validate_dsh_provider_config(&config).is_err());
-        let config = serde_json::json!({ "baseURL": "  ", "models": [{ "id": "m" }] });
-        assert!(validate_dsh_provider_config(&config).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_empty_models_and_missing_id() {
-        let config = serde_json::json!({ "baseURL": "https://a.example.com" });
-        assert!(validate_dsh_provider_config(&config).is_err());
-        let config = serde_json::json!({ "baseURL": "https://a.example.com", "models": [] });
-        assert!(validate_dsh_provider_config(&config).is_err());
-        let config = serde_json::json!({
-            "baseURL": "https://a.example.com",
-            "models": [{ "name": "no-id" }],
-        });
-        assert!(validate_dsh_provider_config(&config).is_err());
-    }
-
-    // ---- yaml_to_json / json_to_yaml ----
-
-    #[test]
-    fn yaml_json_conversion_roundtrip() {
-        let json = serde_json::json!({
-            "name": "test",
-            "count": 42,
-            "nested": {
-                "flag": true
-            }
-        });
-        let yaml = json_to_yaml(&json).unwrap();
-        let back = yaml_to_json(&yaml).unwrap();
-        assert_eq!(json, back);
     }
 }

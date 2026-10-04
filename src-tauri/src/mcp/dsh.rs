@@ -156,7 +156,7 @@ fn read_patch_blocks() -> Result<(String, Vec<String>), AppError> {
 ///   注释、`!!js` 等），右端空行折叠
 /// - 列 0 出现非 `- ` 的内容行（顶层不是纯列表，dsh loader 同样无法加载）
 ///   → Config 错误而不是覆盖，避免误毁用户数据
-fn split_entry_blocks(text: &str) -> Result<(String, Vec<String>), AppError> {
+pub(crate) fn split_entry_blocks(text: &str) -> Result<(String, Vec<String>), AppError> {
     let mut preamble_lines: Vec<&str> = Vec::new();
     let mut blocks: Vec<String> = Vec::new();
     let mut current: Vec<&str> = Vec::new();
@@ -215,7 +215,7 @@ fn push_block(blocks: &mut Vec<String>, lines: &[&str]) {
 
 /// 重组文件文本：preamble + 各块原文，块间单个换行，文件末尾单个换行。
 /// 本模块写出的块自带此规范形，因此二次同步字节不变（幂等）。
-fn assemble_patch_text(preamble: &str, blocks: &[String]) -> String {
+pub(crate) fn assemble_patch_text(preamble: &str, blocks: &[String]) -> String {
     let mut out = String::new();
     if !preamble.is_empty() {
         out.push_str(preamble);
@@ -300,7 +300,7 @@ fn is_mcp_client_item(item: &serde_yaml::Value) -> bool {
 ///
 /// 注意：serde_yaml 0.9 会把 `!!js x` 解析成普通 String（标签丢失），所以
 /// 这里解析出的 Value 只能用于**分类判断**，绝不能回写——回写一律用块原文。
-fn parse_block_entry(block_text: &str) -> Option<serde_yaml::Value> {
+pub(crate) fn parse_block_entry(block_text: &str) -> Option<serde_yaml::Value> {
     let value: serde_yaml::Value = serde_yaml::from_str(block_text).ok()?;
     let seq = value.as_sequence()?;
     if seq.len() != 1 {

@@ -1412,28 +1412,10 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(config)
         }
         AppType::Dsh => {
-            let settings_path = crate::dsh_config::get_dsh_settings_path();
-            if !settings_path.exists() {
-                return Err(AppError::localized(
-                    "dsh.config.missing",
-                    "dsh 配置文件不存在",
-                    "dsh configuration file not found",
-                ));
-            }
-            let yaml_config = crate::dsh_config::read_dsh_settings()?;
-            let mut config = crate::dsh_config::yaml_to_json(&yaml_config)?;
-            // settings.yaml 只存 apiKeyEnv，密钥在 .credentials.yaml；用物化
-            // apiKey 后的 providers 覆盖，编辑表单读回时才能看到密钥。
-            let providers = crate::dsh_config::get_providers()?;
-            if !providers.is_empty() {
-                if let Some(obj) = config.as_object_mut() {
-                    let llm = obj.entry("llm-pi-ai".to_string()).or_insert_with(|| json!({}));
-                    if let Some(llm_obj) = llm.as_object_mut() {
-                        llm_obj.insert("providers".to_string(), Value::Object(providers));
-                    }
-                }
-            }
-            Ok(config)
+            // dsh 的 live 配置在各 profile 的 cordis.patch.yml（不再是
+            // settings.yaml）；read_dsh_live_json 已把条目投影回旧形态
+            // （providers 物化 apiKey，编辑表单读回能看到密钥）。
+            crate::dsh_config::read_dsh_live_json()
         }
         AppType::Zcode => {
             let settings_path = crate::zcode_config::get_zcode_settings_path();

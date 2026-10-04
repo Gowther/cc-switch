@@ -18,7 +18,7 @@
 mod antigravity;
 mod claude;
 mod codex;
-mod dsh;
+pub(crate) mod dsh;
 mod gemini;
 mod hermes;
 mod kimi_code;

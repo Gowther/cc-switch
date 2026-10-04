@@ -217,8 +217,9 @@ pub async fn get_config_status(
             Ok(ConfigStatus { exists, path })
         }
         AppType::Dsh => {
-            let settings_path = crate::dsh_config::get_dsh_settings_path();
-            let exists = settings_path.exists();
+            // dsh 的 live 配置在各 profile 的 cordis.patch.yml（或 home 级
+            // cordis.patch.yml / 旧版 settings.yaml），不再以单一 settings 文件判断
+            let exists = crate::dsh_config::dsh_has_any_config();
             let path = crate::settings::get_dsh_dir().to_string_lossy().to_string();
 
             Ok(ConfigStatus { exists, path })

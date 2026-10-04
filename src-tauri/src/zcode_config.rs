@@ -409,6 +409,16 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
             log::debug!("Skipping zcode providers['{key_str}']: not an object");
             continue;
         };
+        // 用户在 ZCode 里显式禁用（`enabled: false`）的 provider 不该回流进
+        // cc-switch 的管理列表（cc-switch 会把它当可写对象管理，反而覆盖用户的
+        // 关闭状态）。systemDisabledReason 由 ZCode 自己加在 builtin: 条目上，
+        // 同样跳过——cc-switch 不该管理这些被官方停用的内置套餐。
+        let disabled = entry.get("enabled").and_then(|v| v.as_bool()) == Some(false)
+            || entry.get("systemDisabledReason").is_some();
+        if disabled {
+            log::debug!("Skipping zcode providers['{key_str}']: disabled or system-disabled");
+            continue;
+        }
         map.insert(key_str.to_string(), flatten_provider_entry(entry));
     }
 

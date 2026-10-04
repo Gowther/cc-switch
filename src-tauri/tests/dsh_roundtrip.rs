@@ -85,6 +85,11 @@ fn read_yaml(path: &std::path::Path) -> serde_yaml::Value {
 #[test]
 fn provider_roundtrip_splits_api_key_into_credentials_and_removes_cleanly() {
     with_temp_dsh_dir(|dir| {
+        // 建立 profiles/web profile（dsh 的 live 配置在各 profile 的
+        // cordis.patch.yml，不再有 home 级 settings.yaml）
+        let web_patch = dir.join("profiles").join("web").join("cordis.patch.yml");
+        std::fs::create_dir_all(web_patch.parent().unwrap()).expect("create web profile dir");
+
         dsh_config::set_provider(
             "demo",
             json!({
@@ -96,15 +101,20 @@ fn provider_roundtrip_splits_api_key_into_credentials_and_removes_cleanly() {
         )
         .expect("set_provider");
 
-        // settings.yaml 只落 apiKeyEnv 引用，密钥绝不出现
-        let raw = std::fs::read_to_string(dir.join("settings.yaml")).expect("read settings.yaml");
+        // cordis.patch.yml 只落 apiKeyEnv 引用，密钥绝不出现
+        let raw = std::fs::read_to_string(&web_patch).expect("read profile cordis.patch.yml");
         assert!(
             !raw.contains("sk-live-secret"),
-            "secret must never land in settings.yaml:\n{raw}"
+            "secret must never land in cordis.patch.yml:\n{raw}"
         );
         assert!(
             raw.contains("apiKeyEnv: DSH_DEMO_API_KEY"),
             "generated credential ref missing:\n{raw}"
+        );
+        // 条目形态：id 定向 patch（对齐 dsh UI 的写入格式）
+        assert!(
+            raw.contains("id: llm-pi-ai"),
+            "must be a config-targeted entry:\n{raw}"
         );
 
         // get_providers 反向物化 apiKey（并保留 apiKeyEnv 键）
@@ -132,7 +142,7 @@ fn provider_roundtrip_splits_api_key_into_credentials_and_removes_cleanly() {
             dsh_config::get_providers()
                 .expect("get_providers after remove")
                 .is_empty(),
-            "provider must be removed from settings.yaml"
+            "provider must be removed from cordis.patch.yml"
         );
         let cred = read_yaml(&dir.join(".credentials.yaml"));
         assert!(
@@ -208,22 +218,27 @@ records:
 #[test]
 fn set_default_model_switches_provider_and_preserves_reasoning_effort() {
     with_temp_dsh_dir(|dir| {
+        // 预置 web profile + 旧 provider 条目 + 已有 reasoningEffort
+        let web_patch = dir.join("profiles").join("web").join("cordis.patch.yml");
+        std::fs::create_dir_all(web_patch.parent().unwrap()).expect("create web profile dir");
         std::fs::write(
-            dir.join("settings.yaml"),
+            &web_patch,
             "\
-llm-pi-ai:
-  providers:
-    old:
-      baseURL: https://old.example.com
-      models:
-        - id: old-model
-agent-default-model:
-  provider: old
-  model: old-model
-  reasoningEffort: high
+- id: llm-pi-ai
+  config:
+    providers:
+      old:
+        baseURL: https://old.example.com
+        models:
+          - id: old-model
+- id: agent-default-model
+  config:
+    provider: old
+    model: old-model
+    reasoningEffort: high
 ",
         )
-        .expect("seed settings.yaml");
+        .expect("seed cordis.patch.yml");
 
         dsh_config::set_provider(
             "new",
@@ -238,15 +253,15 @@ agent-default-model:
 
         let dm = dsh_config::get_default_model()
             .expect("get_default_model")
-            .expect("default model section missing");
+            .expect("default model entry missing");
         assert_eq!(dm.provider, "new");
         // 模型取 models[0].id
         assert_eq!(dm.model, "new-model");
         // 已有的 reasoningEffort 原样保留
         assert_eq!(dm.reasoning_effort.as_deref(), Some("high"));
 
-        let raw = std::fs::read_to_string(dir.join("settings.yaml")).expect("read settings.yaml");
-        assert!(raw.contains("agent-default-model"));
+        let raw = std::fs::read_to_string(&web_patch).expect("read cordis.patch.yml");
+        assert!(raw.contains("id: agent-default-model"));
     });
 }
 
@@ -440,12 +455,16 @@ fn import_from_dsh_maps_stdio_and_streamable_http_servers() {
 
 #[test]
 fn common_config_apply_applied_and_remove_roundtrip() {
-    with_temp_dsh_dir(|_dir| {
+    with_temp_dsh_dir(|dir| {
+        // 通用配置片段现在合并进 llm-pi-ai 条目的 config（保护键 providers 除外）
+        let web_patch = dir.join("profiles").join("web").join("cordis.patch.yml");
+        std::fs::create_dir_all(web_patch.parent().unwrap()).expect("create web profile dir");
+
         let snippet = "\
-agent:
-  max_turns: 10
-ui:
-  theme: dark
+retryPolicy:
+  mode: normal
+  maxRetries: 3
+streamIdleTimeoutMs: 60000
 ";
         assert!(
             !dsh_config::dsh_common_config_applied(snippet),
@@ -458,30 +477,26 @@ ui:
             "snippet must be reported as applied after apply"
         );
 
-        let settings = dsh_config::read_dsh_settings().expect("read settings");
-        assert_eq!(
-            settings
-                .get("agent")
-                .and_then(|v| v.get("max_turns"))
-                .and_then(|v| v.as_u64()),
-            Some(10)
-        );
-        assert_eq!(
-            settings
-                .get("ui")
-                .and_then(|v| v.get("theme"))
-                .and_then(|v| v.as_str()),
-            Some("dark")
-        );
+        // 落在 llm-pi-ai 条目的 config 里（非顶层文件）
+        let raw = std::fs::read_to_string(&web_patch).expect("read cordis.patch.yml");
+        assert!(raw.contains("id: llm-pi-ai"), "{raw}");
+        assert!(raw.contains("retryPolicy:"), "{raw}");
+        assert!(raw.contains("streamIdleTimeoutMs: 60000"), "{raw}");
 
         dsh_config::remove_dsh_common_config(snippet).expect("remove_dsh_common_config");
         assert!(
             !dsh_config::dsh_common_config_applied(snippet),
             "snippet must not be applied after remove"
         );
-        let settings = dsh_config::read_dsh_settings().expect("read settings");
-        assert!(settings.get("agent").is_none(), "applied key must be gone");
-        assert!(settings.get("ui").is_none(), "applied key must be gone");
+        let raw = std::fs::read_to_string(&web_patch).expect("read cordis.patch.yml");
+        assert!(
+            !raw.contains("retryPolicy"),
+            "applied key must be gone:\n{raw}"
+        );
+        assert!(
+            !raw.contains("streamIdleTimeoutMs"),
+            "applied key must be gone:\n{raw}"
+        );
     });
 }
 
