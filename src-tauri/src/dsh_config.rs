@@ -1306,9 +1306,11 @@ mod tests {
             assert!(get_providers().unwrap().get("demo").is_none());
             let creds = fs::read_to_string(get_dsh_credentials_path()).unwrap();
             assert!(!creds.contains("DSH_DEMO_API_KEY"));
-            // llm-pi-ai 条目已整体移除（providers 掏空）
+            // providers 表已掏空（llm-pi-ai 条目本身保留为 config: {providers: {}}，
+            // 与 dsh UI 删除最后一个 provider 后的形态一致）
             let raw = fs::read_to_string(&web).unwrap();
-            assert!(!raw.contains("id: llm-pi-ai"));
+            assert!(raw.contains("providers"), "{raw}");
+            assert!(!raw.contains("demo:"), "{raw}");
         });
     }
 
