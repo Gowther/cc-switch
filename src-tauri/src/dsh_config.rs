@@ -293,9 +293,7 @@ fn serialize_config_entry(entry: &serde_yaml::Value) -> Result<String, AppError>
 }
 
 /// 取定向条目的 config 可变引用
-fn entry_config_mut<'a>(
-    entry: &'a mut serde_yaml::Value,
-) -> Result<&'a mut serde_yaml::Mapping, AppError> {
+fn entry_config_mut(entry: &mut serde_yaml::Value) -> Result<&mut serde_yaml::Mapping, AppError> {
     let map = entry
         .as_mapping_mut()
         .ok_or_else(|| AppError::Config("dsh patch entry must be a mapping".to_string()))?;
