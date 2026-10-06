@@ -68,6 +68,10 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     opencode: boolean;
     openclaw: boolean;
     hermes: boolean;
+    dsh: boolean;
+    zcode: boolean;
+    "kimi-code": boolean;
+    antigravity: boolean;
   }>(() => {
     if (initialData?.apps) {
       return { ...initialData.apps };
@@ -79,6 +83,10 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
+      dsh: defaultEnabledApps.includes("dsh"),
+      zcode: defaultEnabledApps.includes("zcode"),
+      "kimi-code": defaultEnabledApps.includes("kimi-code"),
+      antigravity: defaultEnabledApps.includes("antigravity"),
     };
   });
 
@@ -595,6 +603,70 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.hermes")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-dsh"
+                    checked={enabledApps.dsh}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, dsh: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-dsh"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.dsh")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-zcode"
+                    checked={enabledApps.zcode}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, zcode: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-zcode"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.zcode")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-kimi-code"
+                    checked={enabledApps["kimi-code"]}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, "kimi-code": checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-kimi-code"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.kimi-code")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-antigravity"
+                    checked={enabledApps.antigravity}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, antigravity: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-antigravity"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.antigravity")}
                   </label>
                 </div>
               </div>

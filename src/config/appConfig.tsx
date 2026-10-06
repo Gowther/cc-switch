@@ -23,6 +23,9 @@ export const APP_IDS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "dsh",
+  "zcode",
+  "kimi-code",
 ];
 
 /** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
@@ -32,6 +35,10 @@ export const SKILLS_APP_IDS: AppId[] = [
   "gemini",
   "opencode",
   "hermes",
+  "dsh",
+  "zcode",
+  "kimi-code",
+  "antigravity",
 ];
 
 /** App IDs shown in MCP panels (excludes OpenClaw) */
@@ -107,5 +114,55 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
+  },
+  dsh: {
+    label: "DSH",
+    icon: (
+      <ProviderIcon icon="deepseek" name="DSH" size={14} showFallback={false} />
+    ),
+    activeClass:
+      "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+    badgeClass:
+      "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
+  },
+  zcode: {
+    label: "ZCode",
+    icon: (
+      <ProviderIcon icon="zhipu" name="ZCode" size={14} showFallback={false} />
+    ),
+    activeClass:
+      "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400",
+    badgeClass:
+      "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
+  },
+  "kimi-code": {
+    label: "Kimi Code",
+    icon: (
+      <ProviderIcon
+        icon="kimi"
+        name="Kimi Code"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
+  },
+  antigravity: {
+    label: "Antigravity",
+    icon: (
+      <ProviderIcon
+        icon="google"
+        name="Antigravity"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-red-500/10 ring-1 ring-red-500/20 hover:bg-red-500/20 text-red-600 dark:text-red-400",
+    badgeClass:
+      "bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20 border-0 gap-1.5",
   },
 };

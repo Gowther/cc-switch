@@ -178,6 +178,30 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // dsh (settings.yaml, llm-pi-ai.providers) uses native dsh field names
+            // (`baseURL`, `apiKey`) at the top level of settings_config.
+            AppType::Dsh => (
+                str_at(settings.get("baseURL")),
+                str_at(settings.get("apiKey")),
+            ),
+            // zcode 的 settings_config 是扁平契约（`baseURL`/`apiKey` 顶层）；
+            // 兜底兼容 zcode 原生 `options` 嵌套形态。
+            AppType::Zcode => {
+                let options = settings.get("options");
+                let base_url = str_at(settings.get("baseURL"));
+                let base_url = if base_url.is_empty() {
+                    str_at(options.and_then(|o| o.get("baseURL")))
+                } else {
+                    base_url
+                };
+                let api_key = str_at(settings.get("apiKey"));
+                let api_key = if api_key.is_empty() {
+                    str_at(options.and_then(|o| o.get("apiKey")))
+                } else {
+                    api_key
+                };
+                (base_url, api_key)
+            }
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode => {
                 let options = settings.get("options");
@@ -186,6 +210,14 @@ impl Provider {
                     str_at(options.and_then(|o| o.get("apiKey"))),
                 )
             }
+            // Kimi Code (config.toml) uses snake_case native field names
+            // (`base_url`/`api_key`) at the top level of settings_config.
+            AppType::KimiCode => (
+                str_at(settings.get("base_url")),
+                str_at(settings.get("api_key")),
+            ),
+            // Antigravity 无供应商管理，无凭据可提取
+            AppType::Antigravity => (String::new(), String::new()),
             // Claude and Claude Desktop both use the Anthropic-style env map, keeping
             // the OpenRouter/Google key fallbacks the JS-script path relies on.
             // Listed explicitly (not `_`) so a new AppType fails to compile here.

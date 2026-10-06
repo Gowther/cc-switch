@@ -24,7 +24,11 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
 }) => {
   const { t } = useTranslation();
   const appName = t(`apps.${appId}`);
-  const filenameMap: Record<AppId, string> = {
+  // dsh/zcode/Kimi Code/Antigravity 不支持文件级 Prompts，从映射中排除（对齐 openclaw 在 Modal 中的排除方式）
+  const filenameMap: Record<
+    Exclude<AppId, "dsh" | "zcode" | "kimi-code" | "antigravity">,
+    string
+  > = {
     claude: "CLAUDE.md",
     "claude-desktop": "CLAUDE.md",
     codex: "AGENTS.md",
@@ -33,7 +37,10 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
     openclaw: "AGENTS.md",
     hermes: "AGENTS.md",
   };
-  const filename = filenameMap[appId];
+  const filename =
+    filenameMap[
+      appId as Exclude<AppId, "dsh" | "zcode" | "kimi-code" | "antigravity">
+    ];
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");

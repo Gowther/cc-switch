@@ -129,6 +129,9 @@ const VALID_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "dsh",
+  "zcode",
+  "kimi-code",
 ];
 
 const getInitialApp = (): AppId => {
@@ -196,6 +199,10 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    dsh: false,
+    zcode: false,
+    "kimi-code": false,
+    antigravity: false,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -206,6 +213,9 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.dsh) return "dsh";
+    if (visibleApps.zcode) return "zcode";
+    if (visibleApps["kimi-code"]) return "kimi-code";
     return "claude"; // fallback
   };
 
@@ -287,6 +297,12 @@ function App() {
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
   const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  // DSH/ZCode/Kimi Code/Antigravity 不支持文件级 Prompts（对齐 openclaw 在 prompt 面板类型上的排除）
+  const hasPromptsSupport =
+    sharedFeatureApp !== "dsh" &&
+    sharedFeatureApp !== "zcode" &&
+    sharedFeatureApp !== "kimi-code" &&
+    sharedFeatureApp !== "antigravity";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -671,6 +687,18 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "dsh") {
+        await queryClient.invalidateQueries({
+          queryKey: ["dshLiveProviderIds"],
+        });
+      } else if (activeApp === "zcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["zcodeLiveProviderIds"],
+        });
+      } else if (activeApp === "kimi-code") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiCodeLiveProviderIds"],
+        });
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -722,7 +750,10 @@ function App() {
     if (
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
-      activeApp === "hermes"
+      activeApp === "hermes" ||
+      activeApp === "dsh" ||
+      activeApp === "zcode" ||
+      activeApp === "kimi-code"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -737,10 +768,26 @@ function App() {
                   queryKey: openclawKeys.liveProviderIds,
                   queryFn: () => providersApi.getOpenClawLiveProviderIds(),
                 })
-              : await queryClient.ensureQueryData({
-                  queryKey: hermesKeys.liveProviderIds,
-                  queryFn: () => providersApi.getHermesLiveProviderIds(),
-                });
+              : activeApp === "hermes"
+                ? await queryClient.ensureQueryData({
+                    queryKey: hermesKeys.liveProviderIds,
+                    queryFn: () => providersApi.getHermesLiveProviderIds(),
+                  })
+                : activeApp === "dsh"
+                  ? await queryClient.ensureQueryData({
+                      queryKey: ["dshLiveProviderIds"],
+                      queryFn: () => providersApi.getDshLiveProviderIds(),
+                    })
+                  : activeApp === "zcode"
+                    ? await queryClient.ensureQueryData({
+                        queryKey: ["zcodeLiveProviderIds"],
+                        queryFn: () => providersApi.getZcodeLiveProviderIds(),
+                      })
+                    : await queryClient.ensureQueryData({
+                        queryKey: ["kimiCodeLiveProviderIds"],
+                        queryFn: () =>
+                          providersApi.getKimiCodeLiveProviderIds(),
+                      });
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -994,7 +1041,10 @@ function App() {
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
-                        activeApp === "hermes"
+                        activeApp === "hermes" ||
+                        activeApp === "dsh" ||
+                        activeApp === "zcode" ||
+                        activeApp === "kimi-code"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1238,7 +1288,10 @@ function App() {
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
-              activeApp !== "hermes" && (
+              activeApp !== "hermes" &&
+              activeApp !== "dsh" &&
+              activeApp !== "zcode" &&
+              activeApp !== "kimi-code" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1513,10 +1566,16 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("prompts")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasPromptsSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
                                 title={t("prompts.manage")}
                               >
-                                <Book className="w-4 h-4" />
+                                <Book className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
